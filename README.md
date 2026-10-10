@@ -131,3 +131,7 @@ For changes to numbering, identity and the TV write path, the tests for slot swa
 
 - **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; the TV write path is logically unchanged.
 - For future app releases, keep `APP_VERSION` in `version.py`, both READMEs and the tests consistent. `?v=` and the version chip are set automatically from `version.py`. Do not create invalid nested `<script>`/`<style>` tags.
+
+## License
+
+[MIT](LICENSE) © 2026 robNice. Use at your own risk: changes to the TV's channel list are made via undocumented LG interfaces and cannot be rolled back automatically.

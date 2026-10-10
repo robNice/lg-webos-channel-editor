@@ -131,3 +131,7 @@ Für Änderungen an Nummerierung, Identität und TV-Schreibpfad müssen insbeson
 
 - **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; der TV-Schreibpfad ist logisch unverändert.
 - Bei künftigen App-Releases `APP_VERSION` in `version.py`, beide READMEs und Tests konsistent halten. `?v=` und der Versions-Chip werden automatisch aus `version.py` gesetzt. Keine ungültigen verschachtelten `<script>`-/`<style>`-Tags erzeugen.
+
+## Lizenz
+
+[MIT](LICENSE) © 2026 robNice. Nutzung auf eigenes Risiko: Änderungen an der Senderliste des TV erfolgen über undokumentierte LG-Schnittstellen und lassen sich nicht automatisch rückgängig machen.
