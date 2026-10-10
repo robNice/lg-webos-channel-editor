@@ -4,7 +4,7 @@
 
 [English](README.md) · **Deutsch**
 
-**Aktuelle Version: v0.5.25.** Zuletzt am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026); v0.5.25 ändert den TV-Schreibpfad nicht.
+**Aktuelle Version: v0.5.26.** Zuletzt am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026); v0.5.25 und v0.5.26 ändern den TV-Schreibpfad nicht.
 
 Browserbasierte, **lokal auf dem Computer laufende** Verwaltung der LG-webOS-Sender- und Favoritenlisten. Die Anwendung importiert eine SQLite-Sicherung des LG-TV per Root-SSH oder aus einer Datei, bearbeitet eine lokale Arbeitskopie und kann ausgewählte Änderungen **nach TV-Backup, Live-Abgleich, Vorschau und ausdrücklicher Bestätigung über LG-Luna-APIs zurückübertragen**. Eine laufende LG-SQLite- oder LevelDB-Datei wird niemals direkt überschrieben.
 
@@ -36,12 +36,12 @@ Der Webserver bindet sich **ausschließlich an `127.0.0.1`**, ohne Benutzeranmel
 
 Nach einem Update den laufenden Server neu starten – Python lädt den Code nur beim Start.
 
-## Aktueller Funktionsumfang (v0.5.25)
+## Aktueller Funktionsumfang (v0.5.26)
 
 | Funktion | Stand |
 | --- | --- |
 | LG-Datenbank aus Datei oder per SSH importieren | Implementiert; TV-seitiger SQLite-Snapshot über `.backup` |
-| Favoritenlisten A–H anzeigen, Sender suchen/filtern, hinzufügen/entfernen | Implementiert; TV-Übertragung über Luna |
+| Favoritenlisten A–H anzeigen, Sender suchen/filtern (TV/Radio, Verschlüsselung, Empfangsart), hinzufügen/entfernen | Implementiert; TV-Übertragung über Luna |
 | Sender innerhalb einer Favoritenliste sortieren | Implementiert; TV-Übertragung und Zustandsprüfung |
 | Einzelne Sendernummer durch Klick auf die Nummer ändern | Implementiert; 1–99 für **neu vergebene** Nummern |
 | Belegte Sendernummer vergeben | Unterstützter **Platztausch**, sofern eindeutig und zulässig |
@@ -54,7 +54,7 @@ Nach einem Update den laufenden Server neu starten – Python lädt den Code nur
 | Arbeitsdatenbank, CSV und JSON exportieren | Implementiert |
 | Oberfläche Deutsch / Englisch | Implementiert; Sprache aus der Browsereinstellung, weitere Sprachen ergänzbar |
 
-**Neue Programmnummern sind in dieser Anwendung auf `1–99` begrenzt**, entsprechend dem LG-Eingabedialog. Das ist eine **bewusste UI-Regel**, keine Behauptung, dass die Luna-API niemals höhere Nummern akzeptiert. Bereits existierende Nummern über 99 (z. B. 101, 1004, 4096) werden unverändert eingelesen und angezeigt. Automatisches Umnummerieren kann andere Sender und die globale Nummerierung beeinflussen; die Vorschau weist darauf hin.
+**Neue Programmnummern sind in dieser Anwendung auf `1–99` begrenzt**, entsprechend dem LG-Eingabedialog. Das ist eine **bewusste UI-Regel**, keine Behauptung, dass die Luna-API niemals höhere Nummern akzeptiert. Bereits existierende Nummern über 99 (z. B. 101, 1004, 4096) werden unverändert eingelesen und angezeigt. Automatisches Umnummerieren kann andere Sender und die globale Nummerierung beeinflussen; die Vorschau weist darauf hin. LG nummeriert jede Empfangsart (Satellit, Kabel, Antenne) getrennt; eine Favoritenliste lässt sich daher nur durchnummerieren, wenn alle ihre Sender dieselbe Empfangsart haben. Senderlisten aus früheren Kabel- oder Antennensuchläufen bleiben auf dem TV erhalten, auch wenn dort nichts mehr angeschlossen ist.
 
 ### Empfohlener Bedienablauf
 
@@ -129,7 +129,7 @@ Für Änderungen an Nummerierung, Identität und TV-Schreibpfad müssen insbeson
 
 ### Versions- und Dokumentationspflege
 
-- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; der TV-Schreibpfad ist logisch unverändert.
+- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne). Der TV-Schreibpfad ist logisch unverändert.
 - Bei künftigen App-Releases `APP_VERSION` in `version.py`, beide READMEs und Tests konsistent halten. `?v=` und der Versions-Chip werden automatisch aus `version.py` gesetzt. Keine ungültigen verschachtelten `<script>`-/`<style>`-Tags erzeugen.
 
 ## Lizenz

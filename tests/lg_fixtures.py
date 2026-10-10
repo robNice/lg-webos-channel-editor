@@ -21,7 +21,9 @@ def create_channel_db(path, channels):
     """Create a minimal LG channel SQLite file.
 
     ``channels``: iterable of dicts with ``id``, ``name``, ``number`` and
-    optional ``mso`` (default ``'main'``) and ``favorites`` ({group: index}).
+    optional ``mso`` (default ``'main'``), ``favorites`` ({group: index}),
+    ``mode`` (LG ``chan_mode_name``, default ``'Satellite'``) and ``satellite``
+    (``sat_name``, default ``'ASTRA 19.2E'`` for satellite, otherwise empty).
     """
     columns = ', '.join(f'fav_chan_gr_{g.lower()} TEXT, favoriteIdx{g} INTEGER' for g in GROUPS)
     with sqlite3.connect(path) as conn:
@@ -35,8 +37,10 @@ def create_channel_db(path, channels):
             conn.execute('INSERT INTO channel_group_tuner VALUES(?,?,?,?,?)', (200 + i, 'Favoriten ' + g, g, 1, 0))
         for c in channels:
             favorites = c.get('favorites', {})
+            mode = c.get('mode', 'Satellite')
+            satellite = c.get('satellite', 'ASTRA 19.2E' if mode == 'Satellite' else '')
             values = [c['id'], c.get('mso', 'main'), c['name'], str(c['number']), int(c['number']),
-                      'ASTRA 19.2E', 'Satellite']
+                      satellite, mode]
             for g in GROUPS:
                 values += ['1' if g in favorites else '0', favorites.get(g, NOT_MEMBER_INDEX)]
             placeholders = ','.join('?' * len(values))

@@ -4,7 +4,7 @@
 
 **English** · [Deutsch](README.de.md)
 
-**Current version: v0.5.25.** Last version confirmed on a real TV: **v0.5.24** (October 10, 2026); v0.5.25 does not change the TV write path.
+**Current version: v0.5.26.** Last version confirmed on a real TV: **v0.5.24** (October 10, 2026); v0.5.25 and v0.5.26 do not change the TV write path.
 
 Browser-based management of LG webOS channel and favorite lists that **runs locally on your computer**. The application imports an SQLite backup of the LG TV via root SSH or from a file, edits a local working copy and can transfer selected changes back **via LG Luna APIs after a TV backup, live comparison, preview and explicit confirmation**. A running LG SQLite or LevelDB file is never overwritten directly.
 
@@ -36,12 +36,12 @@ The web server binds **exclusively to `127.0.0.1`**, without user authentication
 
 After an update, restart the running server – Python loads the code only at startup.
 
-## Current features (v0.5.25)
+## Current features (v0.5.26)
 
 | Feature | Status |
 | --- | --- |
 | Import the LG database from a file or via SSH | Implemented; TV-side SQLite snapshot via `.backup` |
-| Show favorite lists A–H, search/filter channels, add/remove | Implemented; transfer to the TV via Luna |
+| Show favorite lists A–H, search/filter channels (TV/radio, encryption, reception mode), add/remove | Implemented; transfer to the TV via Luna |
 | Sort channels within a favorite list | Implemented; transfer to the TV with state verification |
 | Change a single channel number by clicking the number | Implemented; 1–99 for **newly assigned** numbers |
 | Assign an occupied channel number | Supported **slot swap**, if unambiguous and permitted |
@@ -54,7 +54,7 @@ After an update, restart the running server – Python loads the code only at st
 | Export the working database, CSV and JSON | Implemented |
 | User interface in English / German | Implemented; language from the browser setting, more languages can be added |
 
-**New programme numbers are limited to `1–99` in this application**, matching the LG input dialog. This is a **deliberate UI rule**, not a claim that the Luna API never accepts higher numbers. Existing numbers above 99 (e.g. 101, 1004, 4096) are imported and displayed unchanged. Automatic renumbering can affect other channels and the global numbering; the preview points this out.
+**New programme numbers are limited to `1–99` in this application**, matching the LG input dialog. This is a **deliberate UI rule**, not a claim that the Luna API never accepts higher numbers. Existing numbers above 99 (e.g. 101, 1004, 4096) are imported and displayed unchanged. Automatic renumbering can affect other channels and the global numbering; the preview points this out. LG numbers each reception mode (satellite, cable, antenna) separately, so a favorite list can only be renumbered if all its channels share one reception mode; channel lists from earlier cable or antenna scans stay on the TV even if nothing is connected there anymore.
 
 ### Recommended workflow
 
@@ -129,7 +129,7 @@ For changes to numbering, identity and the TV write path, the tests for slot swa
 
 ### Version and documentation maintenance
 
-- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; the TV write path is logically unchanged.
+- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; v0.5.26 shows and filters the reception mode (satellite, cable, antenna). The TV write path is logically unchanged.
 - For future app releases, keep `APP_VERSION` in `version.py`, both READMEs and the tests consistent. `?v=` and the version chip are set automatically from `version.py`. Do not create invalid nested `<script>`/`<style>` tags.
 
 ## License

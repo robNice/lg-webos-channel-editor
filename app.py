@@ -15,7 +15,8 @@ import tv_write
 from number_rules import number_policy, enforce_number_policy, number_warning
 from version import APP_VERSION
 from tv_compare import ChannelStateComparison
-from i18n import I18N, LocalizedError, Message
+from i18n import I18N, Joined, LocalizedError, Message
+from reception import ReceptionMode
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -331,6 +332,7 @@ def channel_rows(conn):
         channels[key] = {
             'id': key, 'number': r['chan_no'], 'name': r['chan_std_name'],
             'satellite': r['sat_name'] or '', 'mode': r['chan_mode_name'] or '',
+            'reception': ReceptionMode.code(r['chan_mode_name']),
             'kind': classify_kind(r,optional), 'access': classify_access(r,optional),
             'numberPolicy': number_policy(key, r['chan_mode_name'], r['chan_no_int'],
                             r['satelliteLcn_flag'] if 'satelliteLcn_flag' in optional else None,
@@ -400,6 +402,16 @@ def save_group_order(conn, group, ids, new_id=None):
 
 
 
+def mixed_mode_summary(channels):
+    """'Satellite: 1LIVE diGGi · Cable: 1LIVE, N-JOY' – names in list order, grouped by reception mode."""
+    names = {}
+    for c in channels:
+        names.setdefault(c['mode'], []).append(c['name'])
+    return Joined(' · ', [Message('renumber.mode_channels', mode=ReceptionMode.label(mode),
+                                  channels=Joined(', ', members))
+                          for mode, members in sorted(names.items(), key=lambda item: ReceptionMode.order(item[0]))])
+
+
 def renumber_plan(conn, group, start=1):
     """Plan number edits without changing the DB; number namespace = chan_mode_name."""
     if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
@@ -452,7 +464,7 @@ def renumber_plan(conn, group, start=1):
     # Keep TV, Radio and other tuner modes isolated.
     modes = {c['mode'] for c in selected}
     if len(modes) != 1:
-        raise LocalizedError('error.renumber.mixed_modes')
+        raise LocalizedError('error.renumber.mixed_modes', modes=mixed_mode_summary(selected))
     mode = selected[0]['mode']
     if not mode: raise LocalizedError('error.renumber.mode_unclear')
     selected_ids = {c['id'] for c in selected}
