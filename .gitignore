@@ -1,0 +1,10 @@
+data/
+__pycache__/
+*.pyc
+/AGENTS.md
+/CLAUDE.md
+/interne_notizen.md
+/CHANGELOG.md
+/docs/archiv/
+/_project_files/
+/.idea/
