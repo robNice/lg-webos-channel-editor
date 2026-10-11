@@ -9,6 +9,7 @@ Channels the TV deleted are dropped from the working copy if they are in no
 local favorite list (v0.6.0, e.g. a leftover copy deleted on the TV).
 Anything else - deleted channels still in a local list, renamed or ambiguous
 ones - is rejected with the affected channel names, without guessing.
+v0.6.4: the same for LG Channels (table ``ip``, see tv_write.channel_tables).
 """
 import sqlite3
 from pathlib import Path
@@ -30,17 +31,19 @@ class TvInventorySync:
     @staticmethod
     def _in_a_list(conn, ids):
         """IDs (of ``ids``) that belong to at least one local favorite list."""
-        columns = {r[1] for r in conn.execute('PRAGMA table_info(tuner_on)')}
-        flags = [f'fav_chan_gr_{g.lower()}' for g in tv_write.GROUPS if f'fav_chan_gr_{g.lower()}' in columns]
         member = set()
-        for row in conn.execute(f'SELECT dvc_chan_id, {", ".join(flags)} FROM tuner_on'):
-            if str(row[0]) in ids and any(str(v or '').strip().lower() in ('1', 'true') for v in row[1:]):
-                member.add(str(row[0]))
+        for table in tv_write.channel_tables(conn):
+            columns = {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}
+            flags = [f'fav_chan_gr_{g.lower()}' for g in tv_write.GROUPS if f'fav_chan_gr_{g.lower()}' in columns]
+            for row in conn.execute(f'SELECT dvc_chan_id, {", ".join(flags)} FROM {table}'):
+                if str(row[0]) in ids and any(str(v or '').strip().lower() in ('1', 'true') for v in row[1:]):
+                    member.add(str(row[0]))
         return member
 
     @staticmethod
     def _channels(conn):
-        return {str(r[0]): str(r[1] or '') for r in conn.execute('SELECT dvc_chan_id, chan_std_name FROM tuner_on')}
+        return {str(r[0]): str(r[1] or '') for table in tv_write.channel_tables(conn)
+                for r in conn.execute(f'SELECT dvc_chan_id, chan_std_name FROM {table}')}
 
     @staticmethod
     def _names(names):
@@ -113,7 +116,7 @@ class TvGroupReload:
     """Replace one favorite list (membership + order) of the working copy by
     the TV version. Channel numbers and the other lists stay as they are.
     The inventories must match (TvInventorySync.adopt first)."""
-    TABLES = ('tuner_on', 'tuner_off', 'favorite_idx')
+    TABLES = ('tuner_on', 'tuner_off', 'favorite_idx', 'ip')
 
     def __init__(self, working_path, tv_path, backup_path):
         self.working_path = Path(working_path)
@@ -127,7 +130,8 @@ class TvGroupReload:
     @staticmethod
     def _members(conn, group):
         flag, index = f'fav_chan_gr_{group.lower()}', f'favoriteIdx{group}'
-        rows = conn.execute(f'SELECT dvc_chan_id, chan_std_name, {flag}, {index} FROM tuner_on').fetchall()
+        rows = [r for table in tv_write.channel_tables(conn)
+                for r in conn.execute(f'SELECT dvc_chan_id, chan_std_name, {flag}, {index} FROM {table}')]
         seen, result = set(), []
         for cid, name, value, position in sorted(rows, key=lambda r: (int(r[3] or 0), str(r[0]))):
             if str(value or '').strip().lower() in ('1', 'true') and cid not in seen:

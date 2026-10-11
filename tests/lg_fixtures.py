@@ -49,23 +49,123 @@ def create_channel_db(path, channels):
     return path
 
 
+def add_ip_channels(path, channels):
+    """Add LG's ``ip`` table (LG Channels streams, same columns as tuner_on,
+    chan_mode_name 'IP') to a file made by ``create_channel_db``.
+    ``channels``: dicts with ``id``, ``name``, ``number``, optional ``radio``
+    and ``scrambled`` (0/1) and ``favorites`` ({group: index}; the TV numbers
+    IP members of a list from 251 on)."""
+    with sqlite3.connect(path) as conn:
+        conn.execute('CREATE TABLE ip AS SELECT * FROM tuner_on WHERE 0')
+        conn.execute('ALTER TABLE ip ADD COLUMN radio_flag INTEGER')
+        conn.execute('ALTER TABLE ip ADD COLUMN scrambled_flag INTEGER')
+        conn.execute('ALTER TABLE ip ADD COLUMN chan_type_name TEXT')
+        for c in channels:
+            values = [c['id'], '', c['name'], str(c['number']), int(c['number']), 'UNKNOWN', 'IP']
+            favorites = c.get('favorites', {})
+            for g in GROUPS:
+                values += ['1' if g in favorites else '0', favorites.get(g, NOT_MEMBER_INDEX)]
+            values += [c.get('radio', 0), c.get('scrambled', 0),
+                       'IP Digital Radio' if c.get('radio') else 'IP Digital TV']
+            conn.execute(f'INSERT INTO ip VALUES ({",".join("?" * len(values))})', values)
+    return path
+
+
+class LiveTvSim:
+    """Simulated LG iepg service for list and number writes across reception
+    modes, like the real TV (v0.6.4, read on an OLED55C27LA):
+    getChannelList with channelMode ['Tuner', 'IP'] returns satellite, cable,
+    terrestrial and IP channels; 'Tuner' alone only the first three. LG's
+    satelliteName is ' ' for cable/terrestrial and 'UNKNOWN' for IP.
+    Use ``luna`` in place of tv_write.luna."""
+    TUNER = ('Satellite', 'Cable', 'Terrestrial')
+    SATELLITE_NAME = {'Satellite': 'ASTRA 19.2E', 'IP': 'UNKNOWN'}
+
+    def __init__(self, channels):
+        """``channels``: dicts like create_channel_db (id, name, number,
+        mode, favorites {group: index})."""
+        self.items = []
+        self.order = {g: [] for g in GROUPS}
+        for c in channels:
+            mode = c.get('mode', 'Satellite')
+            favorites = c.get('favorites', {})
+            self.items.append({'channelId': c['id'], 'channelName': c['name'], 'channelNumber': str(c['number']),
+                               'channelMode': mode, 'satelliteName': self.SATELLITE_NAME.get(mode, ' '),
+                               'favoriteGroup': sorted(favorites)})
+        for g in GROUPS:
+            members = [(c['favorites'][g], c['id']) for c in channels if g in c.get('favorites', {})]
+            self.order[g] = [cid for _, cid in sorted(members)]
+        self.calls = []
+
+    def channel(self, cid):
+        return next(c for c in self.items if c['channelId'] == cid)
+
+    def _view(self, c):
+        view = dict(c, favoriteGroup=[g for g in GROUPS if c['channelId'] in self.order[g]])
+        for g in GROUPS:
+            view['favoriteIdx' + g] = (self.order[g].index(c['channelId']) if c['channelId'] in self.order[g]
+                                       else NOT_MEMBER_INDEX)
+        return view
+
+    def luna(self, client, method, payload, service=None):
+        self.calls.append((method, payload))
+        if method == 'getChannelList':
+            modes = payload['channelMode']
+            modes = [modes] if isinstance(modes, str) else modes
+            wanted = {m for mode in modes for m in (self.TUNER if mode == 'Tuner' else (mode,))}
+            return {'returnValue': True, 'channelList': [self._view(c) for c in self.items
+                                                         if c['channelMode'] in wanted]}
+        if method == 'setChannelFavoriteGroup':
+            for cid in payload['channelId']:
+                for g in payload['favoriteGroup']:
+                    if cid not in self.order[g]:
+                        self.order[g].append(cid)
+        elif method == 'releaseChannelFavoriteGroup':
+            for cid in payload['channelId']:
+                for g in payload['favoriteGroup']:
+                    if cid in self.order[g]:
+                        self.order[g].remove(cid)
+        elif method == 'moveChannelFavoritePriority':
+            order = self.order[GROUPS[payload['favoriteGroupId']]]
+            order.remove(payload['channelId'][0])
+            order.insert(order.index(payload['destinationChannelId']), payload['channelId'][0])
+        elif method == 'changeChannelNumber':
+            # LG swaps with the holder of the target number in the same mode.
+            moved = self.channel(payload['channelId'])
+            target = str(payload['channelNumber'])
+            for c in self.items:
+                if c is not moved and c['channelMode'] == moved['channelMode'] and c['channelNumber'] == target:
+                    c['channelNumber'] = moved['channelNumber']
+            moved['channelNumber'] = target
+        else:
+            raise AssertionError(method)
+        return {'returnValue': True}
+
+    def members(self, group):
+        return [self.channel(cid)['channelName'] for cid in self.order[group]]
+
+
 class FakeSSHClient:
     """Fake paramiko client whose remote backup is a copy of ``source``."""
 
-    def __init__(self, source, log=None):
+    def __init__(self, source, log=None, outputs=None):
+        """``outputs``: {substring of a command: stdout bytes}, e.g. the
+        luna-send answer with the TV's model and serial number."""
         self.source = source
         self.log = [] if log is None else log
+        self.outputs = outputs or {}
 
     @classmethod
-    def factory(cls, source, log=None):
-        return lambda: cls(source, log)
+    def factory(cls, source, log=None, outputs=None):
+        return lambda: cls(source, log, outputs)
 
     def connect(self, **kwargs):
         self.log.append(('connect', kwargs['hostname']))
 
     def exec_command(self, cmd, timeout=None):
         self.log.append(('exec', cmd))
-        return None, _Stream(), _Stream()
+        output = next((out for key, out in self.outputs.items() if key in cmd), b'')
+        return None, _Stream(output), _Stream()
 
     def open_sftp(self):
         return _SFTP(self.source, self.log)
@@ -82,8 +182,11 @@ class _Channel:
 class _Stream:
     channel = _Channel()
 
+    def __init__(self, data=b''):
+        self.data = data
+
     def read(self, *args):
-        return b''
+        return self.data
 
 
 class _SFTP:

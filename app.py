@@ -24,8 +24,11 @@ from tv_groups import GroupNameSync, TV_CHANNEL_DB
 from backup_restore import BackupSnapshot, ImportFormat, PendingUploads, RestorePlanner
 from backup_export import EditorExport, ExportOptions, RawTables
 from backup_retention import BackupRetention, Settings
+from tv_backups import TvBackupStore
+from tv_identity import TvIdentity
 from tv_ping import TvPing
 from tv_address import SshPort
+from ip_channels import IpChannels
 from tv_hostkeys import TvHostKeys
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -165,8 +168,9 @@ def settings():
     return Settings(DATA / 'settings.json')
 
 
-def backup_retention():
-    return BackupRetention(DATA / 'tv-backups')
+def backup_store():
+    """TV backups, one folder per TV (model + serial number)."""
+    return TvBackupStore(DATA / 'tv-backups')
 
 
 def tv_sync_report(host, password, port=SshPort.DEFAULT, ssh_client_factory=None):
@@ -201,10 +205,9 @@ def tv_sync_preflight(host, password, port=SshPort.DEFAULT, ssh_client_factory=N
         client = ssh_client_factory()
     token = uuid.uuid4().hex
     remote = f'/tmp/lg-favorites-preflight-{token}.sqlite'
-    backups = DATA / 'tv-backups' if keep else DATA
-    backups.mkdir(parents=True, exist_ok=True)
-    local = backups / (('tv-' if keep else 'tv-report-') + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
-                       + '-' + token[:8] + '.sqlite')
+    name = (('tv-' if keep else 'tv-report-') + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+            + '-' + token[:8] + '.sqlite')
+    local = DATA / name
     with LOCK:
         with connection() as working:
             if working.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
@@ -212,6 +215,9 @@ def tv_sync_preflight(host, password, port=SshPort.DEFAULT, ssh_client_factory=N
         try:
             client.connect(hostname=host, port=port, username='root', password=password,
                            look_for_keys=False, allow_agent=False, timeout=12, auth_timeout=12)
+            if keep:
+                # Kept backups go to the folder of this TV (model + serial number).
+                local = backup_store().directory(TvIdentity.read(client), host, port) / name
             cmd = f"sqlite3 -readonly {TV_CHANNEL_DB} '.backup {remote}'"
             _, stdout, stderr = client.exec_command(cmd, timeout=40)
             if stdout.channel.recv_exit_status() != 0:
@@ -221,7 +227,7 @@ def tv_sync_preflight(host, password, port=SshPort.DEFAULT, ssh_client_factory=N
                     raise LocalizedError('error.tv.db_too_large')
                 sftp.get(remote, str(local))
             if keep:
-                backup_retention().prune(settings().load()['tvBackupsKeep'])
+                BackupRetention(local.parent).prune(settings().load()['tvBackupsKeep'])
             with sqlite3.connect(f'file:{local.resolve().as_posix()}?mode=ro', uri=True) as tv, connection() as work:
                 validate_database(tv)
                 if tv.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
@@ -266,6 +272,9 @@ def tv_snapshot_with_new_channels(host,password,port=SshPort.DEFAULT):
     """Fresh TV backup; channels the TV added are taken over, channels it
     deleted are dropped if they are in no local list."""
     check=tv_sync_preflight(host,password,port)
+    # LG Channels are adopted like tuner channels (working copies from before v0.6.4 lack the table).
+    with connection() as conn:
+        IpChannels(conn).ensure_table(Path(check['backedUp']))
     sync=TvInventorySync(DB,Path(check['backedUp']),DATA/'before-tv-adopt.sqlite')
     added=sync.adopt()
     return Path(check['backedUp']),{'adoptedChannels':added,'removedChannels':sync.removed}
@@ -425,14 +434,16 @@ def classify_access(row,cols):
     return 'unknown'
 
 
-def channel_rows(conn):
+def channel_rows(conn, table='tuner_on'):
     # TV-tuner records are the primary display source; same ID may occur in more than one row.
-    available={r[1] for r in conn.execute('PRAGMA table_info(tuner_on)').fetchall()}
+    # table='ip': LG Channels streams (number locked, see IpChannels).
+    if table not in ('tuner_on', IpChannels.TABLE): raise ValueError(table)
+    available={r[1] for r in conn.execute(f'PRAGMA table_info({table})').fetchall()}
     columns=['chan_type_name','radio_flag','tv_flag','dtv_flag','pay_chan_flag','scrambled_flag','satelliteLcn_flag','signal_chan_id','service_type','svc_type','serviceType','service_type_id','chan_service_type','mso_prdt_itm_code','scrambled','is_scrambled','scramble','free_ca_mode','chan_type','channel_type','radio','is_radio','is_tv','is_pay','pay_chan']
     optional=[col for col in columns if col in available]
     rows = conn.execute('SELECT dvc_chan_id, chan_no, chan_no_int, chan_std_name, sat_name, chan_mode_name, '+(' , '.join(optional)+', ' if optional else '')
                         + ', '.join(f'fav_chan_gr_{g.lower()}, favoriteIdx{g}' for g in GROUPS)
-                        + ' FROM tuner_on ORDER BY chan_no_int, chan_std_name').fetchall()
+                        + f' FROM {table} ORDER BY chan_no_int, chan_std_name').fetchall()
     channels = {}
     for r in rows:
         key = r['dvc_chan_id']
@@ -457,6 +468,16 @@ def channel_rows(conn):
     return list(channels.values())
 
 
+def all_channel_rows(conn):
+    """Tuner channels and LG Channels (IP) - everything a favorite list can hold."""
+    return channel_rows(conn) + IpChannels(conn, channel_rows).rows()
+
+
+def member_tables(conn):
+    """Tables holding favorite flags and positions (LG keeps them in all of them)."""
+    return ['tuner_off', 'favorite_idx'] + tv_write.channel_tables(conn)
+
+
 def channel_sort(items, group):
     def key(c):
         n = c['positions'][group]
@@ -468,13 +489,14 @@ def channel_sort(items, group):
 
 def get_overview(conn):
     channels = channel_rows(conn)
+    members = all_channel_rows(conn)
     return {'groups': read_groups(conn), 'total': len(channels),
-            'counts': {g: sum(bool(c['favorites'][g]) for c in channels) for g in GROUPS}}
+            'counts': {g: sum(bool(c['favorites'][g]) for c in members) for g in GROUPS}}
 
 
 def set_membership(conn, group, channel_id, enabled):
     if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
-    channels = {c['id']: c for c in channel_rows(conn)}
+    channels = {c['id']: c for c in all_channel_rows(conn)}
     if channel_id not in channels: raise LocalizedError('error.edit.channel_not_found')
     if channels[channel_id]['favorites'][group] == bool(enabled): return
     flag, idx = f'fav_chan_gr_{group.lower()}', f'favoriteIdx{group}'
@@ -492,7 +514,7 @@ def set_membership(conn, group, channel_id, enabled):
 
 def clear_membership(conn, group, ids):
     flag, idx = f'fav_chan_gr_{group.lower()}', f'favoriteIdx{group}'
-    for table in ('tuner_on', 'tuner_off', 'favorite_idx'):
+    for table in member_tables(conn):
         conn.executemany(f'UPDATE {table} SET {flag}=?, {idx}=? WHERE dvc_chan_id=?',
                          [('0', 250, cid) for cid in ids])
 
@@ -507,7 +529,7 @@ def ensure_favorite_row(conn, channel_id):
 
 def save_group_order(conn, group, ids, new_id=None):
     if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
-    channels = {c['id']: c for c in channel_rows(conn)}
+    channels = {c['id']: c for c in all_channel_rows(conn)}
     if len(ids) != len(set(ids)): raise LocalizedError('error.edit.duplicate_ids')
     if not set(ids).issubset(channels): raise LocalizedError('error.edit.unknown_id')
     existing = {c['id'] for c in channels.values() if c['favorites'][group]}
@@ -519,7 +541,7 @@ def save_group_order(conn, group, ids, new_id=None):
 def replace_group_members(conn, group, ids):
     """Set membership AND order of a list to exactly ``ids`` (backup restore)."""
     if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
-    channels = channel_rows(conn)
+    channels = all_channel_rows(conn)
     if len(ids) != len(set(ids)): raise LocalizedError('error.edit.duplicate_ids')
     if not set(ids).issubset(c['id'] for c in channels): raise LocalizedError('error.edit.unknown_id')
     clear_membership(conn, group, [c['id'] for c in channels if c['favorites'][group] and c['id'] not in ids])
@@ -531,7 +553,7 @@ def write_group_order(conn, group, ids):
     if len(ids) > 250: raise LocalizedError('error.edit.too_many_favorites')
     for pos, cid in enumerate(ids):
         ensure_favorite_row(conn, cid)
-        for table in ('tuner_on', 'tuner_off', 'favorite_idx'):
+        for table in member_tables(conn):
             conn.execute(f'UPDATE {table} SET {flag}=?, {idx}=? WHERE dvc_chan_id=?', ('1', pos, cid))
 
 
@@ -704,6 +726,7 @@ def change_single_number(conn, channel_id, new_number):
     Keep immutable LG IDs in the local working database. TV write-back will
     resolve the two original IDs and perform one verified native LG swap.
     """
+    IpChannels(conn).refuse_number(channel_id)
     if type(new_number) is not int or not 1 <= new_number <= 99:
         raise LocalizedError('error.number.out_of_range')
     rows = conn.execute('SELECT chan_no_int,chan_mode_name FROM tuner_on WHERE dvc_chan_id=?', (channel_id,)).fetchall()
@@ -824,7 +847,7 @@ def backup_snapshot(kind, raw):
         conn.row_factory = sqlite3.Row
         try:
             validate_database(conn)
-            return BackupSnapshot.from_channels(channel_rows(conn), group_names(conn))
+            return BackupSnapshot.from_channels(all_channel_rows(conn), group_names(conn))
         finally:
             conn.close()
     finally:
@@ -832,7 +855,7 @@ def backup_snapshot(kind, raw):
 
 
 def restore_planner(conn, snapshot):
-    return RestorePlanner(snapshot, channel_rows(conn), group_names(conn), is_default_group_name)
+    return RestorePlanner(snapshot, all_channel_rows(conn), group_names(conn), is_default_group_name)
 
 
 def import_selection(data):
@@ -929,7 +952,7 @@ def export_file(conn, options, lang):
     filename = lambda key: I18N.translate(lang, key)
     if options.kind == 'sqlite':
         return export_sqlite(conn), 'application/vnd.sqlite3', filename('export.filename.sqlite')
-    export = EditorExport(options, channel_rows(conn), group_names(conn), RawTables(conn), channel_sort)
+    export = EditorExport(options, all_channel_rows(conn), group_names(conn), RawTables(conn), channel_sort)
     if options.kind == 'json':
         return export.json(lang), 'application/json', filename('export.filename.json')
     raw, content_type, key = export.csv(lang)
@@ -1055,8 +1078,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({'online': tv_ping(query.get('host', [''])[0], int(port) if port.isdigit() else -1)})
             except LocalizedError as e:
                 return self.fail(e, 400)
+        if parsed.path == '/api/tv-backups':
+            # Backup history: the known TVs, or the backups of one TV (newest first).
+            tv = parse_qs(parsed.query).get('tv', [None])[0]
+            if tv is None:
+                return self.reply({'tvs': backup_store().tvs()})
+            try:
+                return self.reply({'backups': backup_store().backups(tv)})
+            except LocalizedError as e:
+                return self.fail(e, 404)
         if parsed.path == '/api/settings':
-            return self.reply({'settings': settings().load(), 'backups': backup_retention().stats(),
+            return self.reply({'settings': settings().load(), 'backups': backup_store().stats(),
                                'range': list(Settings.KEEP_RANGE)})
         if parsed.path == '/api/status':
             with LOCK:
@@ -1078,9 +1110,10 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 try:
                     with connection() as conn:
-                        items = channel_rows(conn)
+                        items = all_channel_rows(conn)
                         favorites = channel_sort([c for c in items if c['favorites'][group]], group)
-                        others = sorted([c for c in items if not c['favorites'][group]], key=lambda c: c['name'].casefold())
+                        others = [c for c in items if not c['favorites'][group]]
+                        others.sort(key=lambda c: c['name'].casefold())
                         return self.reply({'favorites': favorites, 'others': others})
                 except Exception as e: return self.fail(e, 400)
         if parsed.path.startswith('/download/'):
@@ -1119,6 +1152,13 @@ class Handler(BaseHTTPRequestHandler):
                 if len(raw) > MAX_UPLOAD: raise LocalizedError('error.upload.too_large')
                 return self.reply(analyse_upload(raw))
             data = json.loads(self.rfile.read(length))
+            if self.path == '/api/tv-backups/restore':
+                # Same analysis as an uploaded file: the restore dialog takes over.
+                try:
+                    backup = backup_store().path(data.get('tv'), data.get('file'))
+                except LocalizedError as e:
+                    return self.fail(e, 404)
+                return self.reply(analyse_upload(backup.read_bytes()))
             if self.path == '/api/import-plan':
                 return self.reply(import_plan(str(data.get('token')), data))
             if self.path == '/api/import-apply':
@@ -1150,8 +1190,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/settings':
                 with LOCK:
                     values = settings().save({'tvBackupsKeep': data.get('tvBackupsKeep')})
-                    deleted = backup_retention().prune(values['tvBackupsKeep'])
-                    return self.reply({'settings': values, 'deleted': len(deleted), 'backups': backup_retention().stats()})
+                    deleted = backup_store().prune(values['tvBackupsKeep'])
+                    return self.reply({'settings': values, 'deleted': len(deleted), 'backups': backup_store().stats()})
             if self.path == '/api/import-tv':
                 import_from_tv(data.get('host'), data.get('password'), request_port(data))
                 return self.reply({'ok': True})

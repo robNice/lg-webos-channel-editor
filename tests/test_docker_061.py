@@ -98,7 +98,8 @@ class LoginHostKeyTests(unittest.TestCase):
         def connect(host, password, port, trust):
             calls.append(trust)
             return Client()
-        self.assertEqual(TvLoginCheck(connect).check('tv', 'pw', 22, trust='SHA256:abc'), {'ok': True, 'host': 'tv'})
+        self.assertEqual(TvLoginCheck(connect).check('tv', 'pw', 22, trust='SHA256:abc'), {'ok': True, 'host': 'tv',
+                                                                                         'tv': {'id': 'host-tv_22', 'model': None, 'serial': None}})
         self.assertEqual(calls, ['SHA256:abc'])
 
     def test_changed_key_is_rejected_with_clear_message(self):

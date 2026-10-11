@@ -44,7 +44,7 @@ class TvLoginCheckTests(unittest.TestCase):
     def test_success_checks_tools_and_closes(self):
         client = FakeClient()
         login, calls = self.check(client)
-        self.assertEqual(login.check('192.168.1.5', 'pw'), {'ok': True, 'host': '192.168.1.5'})
+        self.assertEqual(login.check('192.168.1.5', 'pw'), {'ok': True, 'host': '192.168.1.5', 'tv': {'id': 'host-192.168.1.5_22', 'model': None, 'serial': None}})
         self.assertEqual(calls, [('192.168.1.5', 'pw', 22)])
         self.assertIn('luna-send', client.commands[0])
         self.assertIn('sqlite3', client.commands[0])
@@ -84,7 +84,7 @@ class TvLoginHttpTests(AppServerTestCase):
         client = FakeClient()
         with patch.object(app, 'connect_tv', lambda host, password, port=22, trust=None: client):
             status, body = self.post('/api/tv-login', {'host': 'tv', 'password': 'pw'})
-        self.assertEqual((status, body), (200, {'ok': True, 'host': 'tv'}))
+        self.assertEqual((status, body), (200, {'ok': True, 'host': 'tv', 'tv': {'id': 'host-tv_22', 'model': None, 'serial': None}}))
 
     def test_login_failure_is_400_with_message(self):
         def refuse(host, password, port=22, trust=None):

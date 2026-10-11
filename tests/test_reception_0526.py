@@ -38,7 +38,8 @@ class ReceptionModeTests(unittest.TestCase):
         self.assertEqual(ReceptionMode.code(' cable '), 'cable')
 
     def test_unknown_or_empty_mode_is_other(self):
-        for raw in ('', None, 'IP', 'Wurst'):
+        # 'IP' (LG Channels) is its own mode since v0.6.4.
+        for raw in ('', None, 'Wurst'):
             self.assertEqual(ReceptionMode.code(raw), 'other')
 
     def test_label_is_localized_message(self):
@@ -97,7 +98,9 @@ class FrontendTests(unittest.TestCase):
             select = re.search(rf'<select[^>]*id="{prefix}Reception"[^>]*>(.*?)</select>', TEMPLATE)
             self.assertIsNotNone(select, prefix)
             values = re.findall(r'<option value="([a-z]+)">\{\{t:filter\.reception_\1\}\}</option>', select.group(1))
-            self.assertEqual(values, ['all', 'satellite', 'cable', 'terrestrial', 'other'])
+            # IP channels (v0.6.4) are never in a favorite list: filter only on the right.
+            ip = ['ip'] if prefix == 'all' else []
+            self.assertEqual(values, ['all', 'satellite', 'cable', 'terrestrial'] + ip + ['other'])
 
     def test_js_filters_and_shows_reception(self):
         self.assertIn('Reception', JS)

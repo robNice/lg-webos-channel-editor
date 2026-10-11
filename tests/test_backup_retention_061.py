@@ -88,8 +88,9 @@ class PreflightTests(unittest.TestCase):
         app.DATA.mkdir()
         app.import_db(create_channel_db(self.dir / 'local.sqlite', CHANNELS))
         self.tv = create_channel_db(self.dir / 'tv.sqlite', CHANNELS)
-        self.backups = app.DATA / 'tv-backups'
-        self.backups.mkdir()
+        # v0.6.4: one folder per TV (this fake TV reports no serial number).
+        self.backups = app.DATA / 'tv-backups' / 'host-192.168.1.50_22'
+        self.backups.mkdir(parents=True)
         for day in range(1, 6):
             (self.backups / backup_name(day)).write_bytes(b'old')
 
@@ -124,8 +125,8 @@ class SettingsEndpointTests(AppServerTestCase):
             return error.code, json.loads(error.read())
 
     def test_get_and_save(self):
-        backups = self.app.DATA / 'tv-backups'
-        backups.mkdir(exist_ok=True)
+        backups = self.app.DATA / 'tv-backups' / 'host-tv_22'
+        backups.mkdir(parents=True, exist_ok=True)
         for day in range(1, 5):
             (backups / backup_name(day)).write_bytes(b'12345')
         status, body, _ = self.get('/api/settings')

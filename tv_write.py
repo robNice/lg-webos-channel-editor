@@ -16,6 +16,39 @@ SERVICE = 'com.webos.service.iepg'
 # Confirmed on the TV: same move/swap results and IDs as the former
 # legacybroadcast.channel service, but the TV no longer tunes to the channel.
 NUMBER_SERVICE = SERVICE
+# v0.6.4: every reception mode, like LG's own channel editor app
+# (com.webos.app.channeledit asks getChannelList with this channelMode).
+# Read on the TV: 'Tuner' = satellite + cable + terrestrial, 'IP' = LG Channels.
+LIVE_MODES = ['Tuner', 'IP']
+# LG's channel tables: tuner channels and LG Channels streams (same columns).
+CHANNEL_TABLES = ('tuner_on', 'ip')
+
+
+def channel_tables(conn):
+    present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    return [t for t in CHANNEL_TABLES if t in present]
+
+
+def channel_identity(name, satellite, mode):
+    """(name, satellite, mode). The satellite name only tells satellite
+    channels apart: LG reports ' ' for cable/terrestrial, 'UNKNOWN' for IP."""
+    mode = str(mode or '').strip()
+    return (str(name or '').strip(), str(satellite or '').strip() if mode == 'Satellite' else '', mode)
+
+
+def _identity_complete(identity):
+    return bool(identity[0] and identity[2] and (identity[1] or identity[2] != 'Satellite'))
+
+
+def _live_mode(c):
+    # Live answers without channelMode come from the former satellite-only query.
+    return str(c.get('channelMode') or 'Satellite').strip()
+
+
+def _on_number(channels, mode, number):
+    """Entries holding ``number`` in ``mode``: programme numbers are unique
+    per reception mode only (cable 1 and satellite 1 coexist)."""
+    return [c for c in channels if str(c.get('channelNumber')) == str(number) and _live_mode(c) == mode]
 
 
 def signature(path):
@@ -27,31 +60,30 @@ def signature(path):
 
 def channel_map(conn):
     conn.row_factory = sqlite3.Row
-    available = {r[1] for r in conn.execute('PRAGMA table_info(tuner_on)')}
-    policy_cols = [c for c in ('satelliteLcn_flag', 'signal_chan_id') if c in available]
-    rows = conn.execute('SELECT dvc_chan_id,chan_std_name,chan_no,sat_name,chan_mode_name,'+
-                        ','.join(f'fav_chan_gr_{g.lower()},favoriteIdx{g}' for g in GROUPS)+
-                        ''.join(','+c for c in policy_cols)+' FROM tuner_on').fetchall()
+    rows = []
+    for table in channel_tables(conn):
+        available = {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}
+        policy_cols = [c for c in ('satelliteLcn_flag', 'signal_chan_id') if c in available]
+        rows += [dict(r) for r in conn.execute(
+            'SELECT dvc_chan_id,chan_std_name,chan_no,sat_name,chan_mode_name,'+
+            ','.join(f'fav_chan_gr_{g.lower()},favoriteIdx{g}' for g in GROUPS)+
+            ''.join(','+c for c in policy_cols)+f' FROM {table}')]
     # Editor rows are keyed by dvc_chan_id. Do not discard equal display
     # names: two DVB services can share a name and still be separate stations.
     grouped = {}
     for r in rows:
-        identity = (str(r['chan_std_name'] or '').strip(),
-                    str(r['sat_name'] or '').strip(),
-                    str(r['chan_mode_name'] or '').strip())
-        if not all(identity):
+        identity = channel_identity(r['chan_std_name'], r['sat_name'], r['chan_mode_name'])
+        if not _identity_complete(identity):
             continue
         db_id = str(r['dvc_chan_id'])
         entry = {'db_id': r['dvc_chan_id'], 'name': identity[0],
                  'number': str(r['chan_no']),
                  # Raw LG LCN flag, independent of the editor's global 1–99 UI policy.
                  # Needed to detect known copy-rather-than-move behavior.
-                 'satellite_lcn_flag': (None if 'satelliteLcn_flag' not in policy_cols
-                                        or r['satelliteLcn_flag'] is None
+                 'satellite_lcn_flag': (None if r.get('satelliteLcn_flag') is None
                                         else int(r['satelliteLcn_flag'])),
                  'number_policy': number_policy(db_id, identity[2], r['chan_no'],
-                                r['satelliteLcn_flag'] if 'satelliteLcn_flag' in policy_cols else None,
-                                r['signal_chan_id'] if 'signal_chan_id' in policy_cols else None),
+                                r.get('satelliteLcn_flag'), r.get('signal_chan_id')),
                  'groups': {g: str(r[f'fav_chan_gr_{g.lower()}'] or '').strip().lower()
                             in ('1','true') for g in GROUPS},
                  'index': {g: int(r[f'favoriteIdx{g}'] or 0) for g in GROUPS}}
@@ -85,7 +117,7 @@ def luna(client, method, payload, service=SERVICE):
 def live_channels(client):
     # Do not restrict to Digital TV: tuner_on also contains satellite radio
     # (e.g. hr1), and the LG API must return the same scope as SQLite.
-    payload = {'dataType':0,'sort':0,'channelMode':'Satellite',
+    payload = {'dataType':0,'sort':0,'channelMode':LIVE_MODES,
                'channelGroup':['All'],'acceptEmptyGroupName':False,
                'attribute':[{'filterType':'Invisible','value':False}]}
     response = luna(client,'getChannelList',payload)
@@ -95,8 +127,8 @@ def live_channels(client):
         raise LocalizedError('error.live.list_missing')
     result={}
     for c in channels:
-        key=(str(c.get('channelName') or '').strip(), str(c.get('satelliteName') or '').strip(), 'Satellite')
-        if not key[0] or not key[1]: continue
+        key=channel_identity(c.get('channelName'), c.get('satelliteName'), _live_mode(c))
+        if not _identity_complete(key): continue
         result.setdefault(key, []).append(c)
     return result
 
@@ -136,7 +168,7 @@ def match_live(local, live, expected_number=None):
         return candidates[0]
     # Compatibility for synthetic tests without LG IDs. Real DB entries always
     # have db_id and never enter this name-based branch.
-    key=local['key']; candidates=live.get((key[0],key[1],'Satellite'), [])
+    key=local['key']; candidates=live.get(tuple(key[:3]), [])
     number=str(expected_number if expected_number is not None else local['number'])
     candidates=[c for c in candidates if str(c.get('channelNumber'))==number]
     if len(candidates)!=1:
@@ -222,7 +254,7 @@ def live_key_for(c, baseline, aliases=None):
     if not channel_id or not any(b.get('db_id') for b in baseline.values()):
         candidates=[key for key,b in baseline.items()
                     if b['name']==str(c.get('channelName') or '').strip()
-                    and key[1]==str(c.get('satelliteName') or '').strip()
+                    and tuple(key[1:3])==channel_identity(c.get('channelName'), c.get('satelliteName'), _live_mode(c))[1:]
                     and b['number']==str(c.get('channelNumber'))]
         if len(candidates)==1:return candidates[0]
     raise LocalizedError('error.identity.favorite_unmapped', name=str(c.get('channelName')))
@@ -298,6 +330,10 @@ def make_plan(working_path, tv_backup_path, live):
     for key,c in edited.items():
         if c['number']!=baseline[key]['number']:
             numbers.append({'kind':'number','key':key,'from':baseline[key]['number'],'to':c['number']})
+    # v0.6.4: the TV does not renumber LG Channels (observed by the user).
+    for op in numbers:
+        if op['key'][2] == 'IP':
+            raise LocalizedError('error.plan.ip_number_locked', name=op['key'][0])
     # Global LG UI limit for new target numbers; check BEFORE any TV mutation.
     # Unchanged pre-existing numbers above 99 are not a reason to block sync.
     for op in numbers:
@@ -506,8 +542,8 @@ def make_plan(working_path, tv_backup_path, live):
         def raw_editable(path):
             with sqlite3.connect(path) as conn:
                 cols = ','.join(f'fav_chan_gr_{g.lower()},favoriteIdx{g}' for g in GROUPS)
-                return sorted(tuple(str(x) for x in row) for row in conn.execute(
-                    'SELECT dvc_chan_id,chan_no,' + cols + ' FROM tuner_on'))
+                return sorted(tuple(str(x) for x in row) for table in channel_tables(conn)
+                              for row in conn.execute(f'SELECT dvc_chan_id,chan_no,{cols} FROM {table}'))
         if raw_editable(working_path) != raw_editable(tv_backup_path):
             raise LocalizedError('error.plan.unmapped_local_changes')
     # If an explicit order operation follows writes, every initial favorite
@@ -545,7 +581,7 @@ def make_plan(working_path, tv_backup_path, live):
             old_ids=by_slot.get((mode,num),set())
             # Some initial target numbers were unoccupied in SQLite; they must
             # also be empty in the live LG channel list.
-            holders=[c for c in all_live if str(c.get('channelNumber'))==num]
+            holders=_on_number(all_live,mode,num)
             if len(old_ids)>1:
                 # The only permitted duplicate here is an ORIGINAL source
                 # number >99, never a swap or a newly assigned target. Verify
@@ -620,7 +656,7 @@ def _check_peers_unchanged(peers, live):
 def _wait_for_copy(client, source, old_number, target_number,
                    delays=(0, 0.25, 0.5, 0.8, 1.2, 1.7, 2.0)):
     """Detect one *additional* LG entry; do not mistake a move for a copy."""
-    old_id=str(source['db_id']); technical=_technical_id(old_id)
+    old_id=str(source['db_id']); technical=_technical_id(old_id); mode=source['key'][2]
     if technical is None:
         raise LocalizedError('error.copy.no_technical_id', id=old_id)
     last_state=''
@@ -634,7 +670,7 @@ def _wait_for_copy(client, source, old_number, target_number,
                  and str(c.get('channelId'))!=old_id]
         if (len(originals)==1 and str(originals[0].get('channelNumber'))==str(old_number)
                 and len(targets)==1
-                and sum(str(c.get('channelNumber'))==str(target_number) for c in all_live)==1):
+                and len(_on_number(all_live,mode,target_number))==1):
             if (set(originals[0].get('favoriteGroup') or [])
                     != {g for g in GROUPS if source['groups'][g]}):
                 raise LocalizedError('error.copy.original_unexpected_groups')
@@ -642,7 +678,7 @@ def _wait_for_copy(client, source, old_number, target_number,
                 raise LocalizedError('error.copy.copy_unexpected_groups')
             return live, originals[0], targets[0], 'copy'
         if (not originals and len(targets)==1
-                and sum(str(c.get('channelNumber'))==str(target_number) for c in all_live)==1
+                and len(_on_number(all_live,mode,target_number))==1
                 and set(targets[0].get('favoriteGroup') or [])
                 == {g for g in GROUPS if source['groups'][g]}):
             # Some services are genuinely moved even from numbers above 99.
@@ -790,8 +826,7 @@ def apply_operations(client,operations,edited,baseline,progress=None):
             if (set(copy.get('favoriteGroup') or []) != imported_copy_groups
                     or imported_copy_groups & _copy_groups(source)):
                 raise LocalizedError('error.reuse.copy_changed')
-            if sum(str(c.get('channelNumber'))==str(op['to'])
-                   for c in flatten_live(before)) != 1:
+            if len(_on_number(flatten_live(before),key[2],op['to'])) != 1:
                 raise LocalizedError('error.reuse.target_duplicated', number=op['to'])
             _migrate_copy_favorites(client,source,existing_id,str(original['channelId']))
             aliases[existing_id]=key
@@ -808,12 +843,11 @@ def apply_operations(client,operations,edited,baseline,progress=None):
             original=match_live(source,before,op['from'])
             if str(original.get('channelId'))!=str(source['db_id']):
                 raise LocalizedError('error.copy.original_id_changed')
-            if any(str(c.get('channelNumber'))==str(op['to']) for c in flatten_live(before)):
+            if _on_number(flatten_live(before),key[2],op['to']):
                 raise LocalizedError('error.copy.target_not_free', number=op['to'])
             # Other entries sharing the old number (e.g. several on 101) must
             # stay untouched, exactly as for a native number change.
-            untouched_peers = _peer_state([c for c in flatten_live(before)
-                                           if str(c.get('channelNumber'))==str(op['from'])],
+            untouched_peers = _peer_state(_on_number(flatten_live(before),key[2],op['from']),
                                           original.get('channelId'))
             ret=luna(client,'changeChannelNumber',
                      {'channelId':original['channelId'],'channelNumber':int(op['to'])},
@@ -857,7 +891,7 @@ def apply_operations(client,operations,edited,baseline,progress=None):
             }
             all_live=flatten_live(before)
             for number, wanted in ((op['from'],source),(op['to'],partner)):
-                holders=[c for c in all_live if str(c.get('channelNumber'))==number]
+                holders=_on_number(all_live,key[2],number)
                 if len(holders)!=1 or str(holders[0].get('channelId'))!=str(wanted.get('channelId')):
                     raise LocalizedError('error.swap.slot_not_unique', number=number)
             ret=luna(client,'changeChannelNumber',
@@ -907,8 +941,8 @@ def apply_operations(client,operations,edited,baseline,progress=None):
             live=live_channels(client); item=match_live(baseline[key],live,op['from'])
             if str(item.get('channelNumber'))!=op['from']:raise LocalizedError('error.number.changed_meanwhile')
             all_live=flatten_live(live)
-            from_holders=[c for c in all_live if str(c.get('channelNumber'))==op['from']]
-            to_holders=[c for c in all_live if str(c.get('channelNumber'))==op['to']]
+            from_holders=_on_number(all_live,key[2],op['from'])
+            to_holders=_on_number(all_live,key[2],op['to'])
             matches = [c for c in from_holders if str(c.get('channelId'))==str(item.get('channelId'))]
             # A duplicated source number above 99 is allowed, because the
             # operation sends the specific channelId; a duplicate target or
@@ -946,7 +980,7 @@ def apply_operations(client,operations,edited,baseline,progress=None):
         for key in moved_keys:
             expected=str(edited[key]['number'])
             actual=match_live(current_identity.get(key,baseline[key]),final,expected)
-            owners=[c for c in all_final if str(c.get('channelNumber'))==expected]
+            owners=_on_number(all_final,key[2],expected)
             if (len(owners)!=1 or str(owners[0].get('channelId'))!=str(actual.get('channelId'))):
                 raise LocalizedError('error.final.slot_not_unique', number=expected)
             members=set(actual.get('favoriteGroup') or [])

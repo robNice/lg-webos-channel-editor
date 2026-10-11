@@ -47,14 +47,38 @@ function askProgrammeNumber(title,current,detail){return new Promise(resolve=>{
  update();input.focus();input.select();
 });}
 const FILTERS={Kind:'kind',Access:'access',Reception:'reception'};
-const RECEPTION_LABEL={satellite:'reception.satellite',cable:'reception.cable',terrestrial:'reception.terrestrial'};
+const RECEPTION_LABEL={satellite:'reception.satellite',cable:'reception.cable',terrestrial:'reception.terrestrial',ip:'reception.ip'};
+// Sort order of the list of other channels (dropdown #allSort, remembered per browser).
+class ChannelSort{
+ static STORAGE='lg-favoriten-editor-sort';
+ static RECEPTION=['satellite','cable','terrestrial','ip','other'];
+ static ACCESS=['free','encrypted','unknown'];
+ static number(c){const n=parseInt(c.number,10);return Number.isFinite(n)?n:null;}
+ static byName(a,b,dir=1){return (!a.name)-(!b.name)||String(a.name).localeCompare(String(b.name),undefined,{sensitivity:'base',numeric:true})*dir;} // unnamed always last
+ // Channels without a number always last, then by name.
+ static byNumber(a,b,dir=1){const x=ChannelSort.number(a),y=ChannelSort.number(b);if(x===null||y===null)return (x===null)-(y===null)||ChannelSort.byName(a,b);return (x-y)*dir||ChannelSort.byName(a,b);}
+ static rank(list,value){const i=list.indexOf(value);return i<0?list.length:i;}
+ static COMPARE={
+   name_asc:(a,b)=>ChannelSort.byName(a,b),
+   name_desc:(a,b)=>ChannelSort.byName(a,b,-1),
+   number_asc:(a,b)=>ChannelSort.byNumber(a,b),
+   number_desc:(a,b)=>ChannelSort.byNumber(a,b,-1),
+   reception:(a,b)=>ChannelSort.rank(ChannelSort.RECEPTION,a.reception)-ChannelSort.rank(ChannelSort.RECEPTION,b.reception)||ChannelSort.byNumber(a,b),
+   satellite:(a,b)=>(!a.satellite)-(!b.satellite)||String(a.satellite).localeCompare(String(b.satellite),undefined,{numeric:true})||ChannelSort.byName(a,b),
+   access:(a,b)=>ChannelSort.rank(ChannelSort.ACCESS,a.access)-ChannelSort.rank(ChannelSort.ACCESS,b.access)||ChannelSort.byName(a,b),
+ };
+ static apply(list,key){return list.sort(ChannelSort.COMPARE[key]||ChannelSort.COMPARE.name_asc);}
+ static restore(select){try{const v=localStorage.getItem(ChannelSort.STORAGE);if(v&&ChannelSort.COMPARE[v])select.value=v;}catch{}}
+ static remember(value){try{localStorage.setItem(ChannelSort.STORAGE,value)}catch{}}
+}
 const KIND_LABEL={radio:'kind.radio',tv:'kind.tv'},ACCESS_LABEL={encrypted:'access.encrypted',free:'access.free'};
-function row(c,favorite){const div=document.createElement('div');div.className='item';div.dataset.id=c.id;div.draggable=favorite;div.innerHTML=`${favorite?`<span class="handle" title="${esc(t('row.drag'))}">⠿</span>`:''}<button type="button" class="number number-button" title="${esc(t('row.change_number'))}">${esc(c.number)} ✎</button><span class="item-name" title="${esc(c.name)}">${esc(c.name)}<div class="item-meta">${esc([t(RECEPTION_LABEL[c.reception]||'reception.other'),c.satellite].filter(Boolean).join(' '))} · ${esc(t(KIND_LABEL[c.kind]||'kind.unknown'))} · ${esc(t(ACCESS_LABEL[c.access]||'access.unknown'))}</div></span><button class="item-actions ${favorite?'danger':''}" title="${esc(t(favorite?'row.remove_title':'row.add_title'))}">${esc(t(favorite?'row.remove':'row.add'))}</button>`;
-div.querySelector('.number-button').onclick=async()=>{const newNumber=await askProgrammeNumber(t('number.dialog.title'),c.number,c.name);if(newNumber===null)return;try{const result=await api('/api/channel-number',{id:c.id,number:newNumber});await sync();note(result.numberChange?.swappedWith?t('status.swapped',{name:result.numberChange.swappedWith}):t('status.number_changed'))}catch(e){note(e.message,true)}};
+function row(c,favorite){const div=document.createElement('div');div.className='item';div.dataset.id=c.id;div.draggable=favorite;div.innerHTML=`${favorite?`<span class="handle" title="${esc(t('row.drag'))}">⠿</span>`:''}${c.numberLocked?`<span class="number number-locked" title="${esc(t('row.ip_number_locked'))}">${esc(c.number)}</span>`:`<button type="button" class="number number-button" title="${esc(t('row.change_number'))}">${esc(c.number)} ✎</button>`}<span class="item-name" title="${esc(c.name)}">${esc(c.name)}<div class="item-meta">${esc([t(RECEPTION_LABEL[c.reception]||'reception.other'),c.satellite].filter(Boolean).join(' '))} · ${esc(t(KIND_LABEL[c.kind]||'kind.unknown'))} · ${esc(t(ACCESS_LABEL[c.access]||'access.unknown'))}</div></span><button class="item-actions ${favorite?'danger':''}" title="${esc(t(favorite?'row.remove_title':'row.add_title'))}">${esc(t(favorite?'row.remove':'row.add'))}</button>`;
+if(!c.numberLocked)div.querySelector('.number-button').onclick=async()=>{const newNumber=await askProgrammeNumber(t('number.dialog.title'),c.number,c.name);if(newNumber===null)return;try{const result=await api('/api/channel-number',{id:c.id,number:newNumber});await sync();note(result.numberChange?.swappedWith?t('status.swapped',{name:result.numberChange.swappedWith}):t('status.number_changed'))}catch(e){note(e.message,true)}};
 div.querySelector('.item-actions').onclick=async()=>{try{await api('/api/member',{group:selected,id:c.id,enabled:!favorite});await sync();note(t('status.saved'));}catch(e){note(e.message,true)}};
 if(favorite){div.addEventListener('dragstart',e=>{dragged=c.id;e.dataTransfer.effectAllowed='move';div.classList.add('dragging')});div.addEventListener('dragend',()=>{dragged=null;document.querySelectorAll('.item').forEach(e=>e.classList.remove('dragging','over'))});div.addEventListener('dragover',e=>{e.preventDefault();div.classList.add('over')});div.addEventListener('dragleave',()=>div.classList.remove('over'));div.addEventListener('drop',async e=>{e.preventDefault();div.classList.remove('over');if(!dragged||dragged===c.id)return;const ids=favorites.map(x=>x.id);ids.splice(ids.indexOf(dragged),1);ids.splice(ids.indexOf(c.id),0,dragged);try{await api('/api/reorder',{group:selected,ids});await sync();note(t('status.order_saved'))}catch(e){note(e.message,true)}})}return div;}
-function renderChannels(){const f=$('#favSearch').value.toLowerCase().trim(),q=$('#allSearch').value.toLowerCase().trim();const matches=(c,p)=>Object.entries(FILTERS).every(([id,field])=>{const v=$('#'+p+id).value;return v==='all'||c[field]===v});let fav=favorites.filter(x=>(x.name+' '+x.number).toLowerCase().includes(f)&&matches(x,'fav'));let oth=others.filter(x=>(x.name+' '+x.number).toLowerCase().includes(q)&&matches(x,'all'));$('#favorites').replaceChildren(...fav.map(c=>row(c,true)));$('#others').replaceChildren(...oth.map(c=>row(c,false)));if(!fav.length)$('#favorites').innerHTML=`<div class="empty">${esc(t('empty.favorites'))}</div>`;if(!oth.length)$('#others').innerHTML=`<div class="empty">${esc(t('empty.others'))}</div>`;$('#favoriteCount').textContent=t('count.favorites',{count:favorites.length});$('#otherCount').textContent=t('count.others',{count:others.length});}
+function renderChannels(){const f=$('#favSearch').value.toLowerCase().trim(),q=$('#allSearch').value.toLowerCase().trim();const matches=(c,p)=>Object.entries(FILTERS).every(([id,field])=>{const v=$('#'+p+id).value;return v==='all'||c[field]===v});let fav=favorites.filter(x=>(x.name+' '+x.number).toLowerCase().includes(f)&&matches(x,'fav'));let oth=others.filter(x=>(x.name+' '+x.number).toLowerCase().includes(q)&&matches(x,'all'));ChannelSort.apply(oth,$('#allSort').value);$('#favorites').replaceChildren(...fav.map(c=>row(c,true)));$('#others').replaceChildren(...oth.map(c=>row(c,false)));if(!fav.length)$('#favorites').innerHTML=`<div class="empty">${esc(t('empty.favorites'))}</div>`;if(!oth.length)$('#others').innerHTML=`<div class="empty">${esc(t('empty.others'))}</div>`;$('#favoriteCount').textContent=t('count.favorites',{count:favorites.length});$('#otherCount').textContent=t('count.others',{count:others.length});}
 async function sync(){const s=await api('/api/status');groups=s.groups;currentCounts=s.counts;renderGroups(s.counts);await loadChannels();}
+ChannelSort.restore($('#allSort'));$('#allSort').addEventListener('change',()=>{ChannelSort.remember($('#allSort').value);renderChannels();});
 $('#favSearch').addEventListener('input',renderChannels);$('#allSearch').addEventListener('input',renderChannels);['fav','all'].flatMap(p=>Object.keys(FILTERS).map(f=>p+f)).forEach(id=>$('#'+id).addEventListener('change',renderChannels));
 $('#rename').onclick=async()=>{const old=groups.find(g=>g.id===selected)?.name;const name=prompt(t('rename.prompt',{group:selected}),old);if(name===null)return;try{await api('/api/rename',{group:selected,name});await sync();note(t('status.name_saved'))}catch(e){note(e.message,true)}};
 $('#renumber').onclick=async()=>{
@@ -223,7 +247,7 @@ function rememberHost(host,port=DEFAULT_SSH_PORT){if(!host)return;try{localStora
 class TvSession{
  // Reachability of the TV (SSH port only, never with the password).
  static PING_INTERVAL=30000;
- constructor(){this.host=null;this.password=null;this.port=DEFAULT_SSH_PORT;this.state='disconnected';this.checked=null;this.timer=null;}
+ constructor(){this.host=null;this.password=null;this.port=DEFAULT_SSH_PORT;this.tv=null;this.state='disconnected';this.checked=null;this.timer=null;}
  get active(){return !!(this.host&&this.password);}
  // Credentials for a TV action; asks for a login first if there is none.
  async credentials(){if(!this.active&&!await this.login())return null;return {host:this.host,password:this.password,port:this.port};}
@@ -252,14 +276,14 @@ class TvSession{
      try{
        const r=await api('/api/tv-login',candidate);
        if(r.unknownHostKey){trust={host:candidate.host,port:candidate.port,fingerprint:r.unknownHostKey.fingerprint};busy(false);status.className='login-status warn';status.textContent=t('login.host_key_unknown',{host:candidate.host,fingerprint:r.unknownHostKey.fingerprint,type:r.unknownHostKey.keyType});connectLabel(t('login.trust_connect'));return;}
-       this.host=candidate.host;this.port=candidate.port;this.password=candidate.password;rememberHost(this.host,this.port);this.watch();dialog.close();
+       this.host=candidate.host;this.port=candidate.port;this.password=candidate.password;this.tv=r.tv||null;rememberHost(this.host,this.port);this.watch();dialog.close();
      }
      catch(err){status.className='login-status error';status.textContent=err.message;busy(false);password.select();}
    };
    dialog.setActions([{label:t('login.skip'),onclick:()=>dialog.close()},{label:t('login.connect'),primary:true,onclick:()=>form.requestSubmit()}]);
    (host.value?password:host).focus();
  });}
- logout(){this.host=null;this.password=null;this.watch();return this.login();}
+ logout(){this.host=null;this.password=null;this.tv=null;this.watch();return this.login();}
  watch(){
    clearInterval(this.timer);this.timer=null;this.checked=null;
    this.state=this.active?'checking':'disconnected';this.render();
@@ -483,6 +507,7 @@ class RestoreDialog{
  describe(plan){
    const n=plan.numbers,lines=[t('restore.summary',{lists:Object.keys(plan.lists).join(', ')||t('common.none'),names:Object.keys(plan.names).join(', ')||t('common.none'),numbers:n.changes.length})];
    if(n.kept.length)lines.push(t('restore.kept',{channels:n.kept.join(', ')}));
+   if(n.locked.length)lines.push(t('restore.ip_locked',{channels:n.locked.join(', ')}));
    if(n.conflicts.length)lines.push(t('restore.conflicts',{channels:n.conflicts.join(', ')}));
    if(n.displacedFavorites.length)lines.push(t('restore.displaced',{channels:n.displacedFavorites.map(d=>t('renumber.other_lists_line',{name:d.name,groups:d.groups.join(', '),old:d.old,new:d.new}).trim()).join('; ')}));
    const details=n.changes.length?`<details><summary>${esc(t('restore.number_details'))}</summary><ul>${n.changes.map(c=>`<li>${esc(c.name)}: ${esc(c.old)} → ${esc(c.new)}</li>`).join('')}</ul></details>`:'';
@@ -534,11 +559,12 @@ class StartupChoice{
 class SettingsDialog{
  async open(){
    let current;try{current=await api('/api/settings');}catch(e){note(e.message,true);return;}
-   const [low,high]=current.range,count=current.backups.count;
+   const [low,high]=current.range,perTv=current.backups.perTv||[];
    const form=document.createElement('form');form.className='login-form settings-form';
    form.innerHTML=`<label for="settings-keep">${esc(t('settings.backups_keep'))}</label><input class="search" id="settings-keep" name="tvBackupsKeep" type="number" min="${low}" max="${high}" step="1" required value="${Number(current.settings.tvBackupsKeep)}"><p class="choice-hint">${esc(t('settings.backups_hint',{count,size:(current.backups.bytes/1048576).toFixed(1)}))}</p><p class="login-status" role="status" aria-live="polite"></p><button type="submit" hidden></button>`;
    const input=form.querySelector('input'),status=form.querySelector('.login-status');
-   const preview=()=>{const keep=Number(input.value),drop=Number.isInteger(keep)&&keep>=low?Math.max(0,count-keep):0;status.className='login-status'+(drop?' warn':'');status.textContent=drop?t('settings.will_delete',{count:drop}):'';};
+   // The limit applies per TV: count what saving would delete in every TV folder.
+   const preview=()=>{const keep=Number(input.value),drop=Number.isInteger(keep)&&keep>=low?perTv.reduce((sum,n)=>sum+Math.max(0,n-keep),0):0;status.className='login-status'+(drop?' warn':'');status.textContent=drop?t('settings.will_delete',{count:drop}):'';};
    input.oninput=preview;preview();
    const dialog=new ModalDialog(t('settings.title'),form);const done=dialog.open();
    form.onsubmit=async e=>{
@@ -552,6 +578,42 @@ class SettingsDialog{
  }
 }
 $('#settingsbtn').onclick=()=>new SettingsDialog().open();
+// Backup history: stored TV backups of one TV (one folder per TV), newest
+// first; the chosen backup goes into the usual restore dialog.
+class BackupHistoryDialog{
+ static label(tv){
+   const name=tv.id==='unassigned'?t('backups.unassigned'):tv.model&&tv.serial?`${tv.model} · ${tv.serial}`:`${tv.host||tv.id}${tv.port?':'+tv.port:''}`;
+   return session.tv&&session.tv.id===tv.id?t('backups.current',{name}):name;
+ }
+ async open(){
+   let tvs;try{tvs=(await api('/api/tv-backups')).tvs;}catch(e){note(e.message,true);return;}
+   const form=document.createElement('form');form.className='login-form backups-form';
+   const current=tvs.find(tv=>session.tv&&tv.id===session.tv.id)||tvs.find(tv=>tv.count)||tvs[0];
+   form.innerHTML=`<label for="backups-tv">${esc(t('backups.tv'))}</label><select class="search" id="backups-tv">${tvs.map(tv=>`<option value="${esc(tv.id)}"${tv===current?' selected':''}>${esc(BackupHistoryDialog.label(tv))} (${Number(tv.count)})</option>`).join('')}</select><div class="backups-list" role="radiogroup"></div><p class="choice-hint">${esc(t('backups.hint'))}</p><p class="login-status" role="status" aria-live="polite"></p>`;
+   this.form=form;this.select=form.querySelector('#backups-tv');this.status=form.querySelector('.login-status');
+   this.dialog=new ModalDialog(t('backups.title'),form,{wide:true});const done=this.dialog.open();
+   this.dialog.setActions([{label:t('common.cancel'),onclick:()=>this.dialog.close()},{label:t('backups.restore'),primary:true,onclick:()=>this.restore()}]);
+   this.select.onchange=()=>this.list();form.onsubmit=e=>{e.preventDefault();this.restore();};
+   await this.list();
+   return done;
+ }
+ async list(){
+   const box=this.form.querySelector('.backups-list'),button=this.dialog.actions.querySelector('.primary');
+   const tv=this.select.value;let backups=[];
+   if(tv){try{backups=(await api('/api/tv-backups?tv='+encodeURIComponent(tv))).backups;}catch(e){this.status.className='login-status error';this.status.textContent=e.message;}}
+   if(tv!==this.select.value)return;
+   const time=iso=>new Date(iso).toLocaleString(document.documentElement.lang,{dateStyle:'medium',timeStyle:'short'});
+   box.innerHTML=backups.length?backups.map((b,i)=>`<label class="check backup-item"><input type="radio" name="backup" value="${esc(b.file)}"${i?'':' checked'}><span>${esc(time(b.time))}<small>${esc(t('backups.item',{channels:b.channels??'?',ip:b.ipChannels??0,size:(b.bytes/1048576).toFixed(1)}))}</small></span></label>`).join(''):`<p class="report-empty">${esc(t('backups.empty'))}</p>`;
+   button.disabled=!backups.length;
+ }
+ async restore(){
+   const chosen=this.form.querySelector('input[name=backup]:checked');if(!chosen)return;
+   const button=this.dialog.actions.querySelector('.primary');button.disabled=true;
+   try{const analysis=await api('/api/tv-backups/restore',{tv:this.select.value,file:chosen.value});this.dialog.close();await new RestoreDialog(analysis).open();}
+   catch(e){this.status.className='login-status error';this.status.textContent=e.message;button.disabled=false;}
+ }
+}
+$('#backupsbtn').onclick=()=>new BackupHistoryDialog().open();
 $('#tvimport').onclick=async()=>{const button=$('#tvimport');button.disabled=true;$('#tv-error').textContent='';try{await TvImport.run();}catch(e){$('#tv-error').textContent=e.message}finally{button.disabled=false;}};
 // After a page reload during a transfer, show its progress again before loading data.
 // Then ask once for the TV login of this page view.

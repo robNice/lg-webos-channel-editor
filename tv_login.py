@@ -5,7 +5,9 @@ stored on the server; the browser keeps host and password in memory only.
 """
 from i18n import LocalizedError
 from tv_address import SshPort
+from tv_backups import TvBackupStore
 from tv_hostkeys import UnknownHostKey
+from tv_identity import TvIdentity
 
 try:
     from paramiko import BadHostKeyException
@@ -22,7 +24,7 @@ class TvLoginCheck:
         self.connect = connect
 
     def check(self, host, password, port=SshPort.DEFAULT, trust=None):
-        """{'ok': True, 'host': ...} or, for a TV whose SSH host key is not
+        """{'ok': True, 'host': ..., 'tv': {id, model, serial}} or, for a TV whose SSH host key is not
         known yet, {'unknownHostKey': {host, fingerprint, keyType}} so the
         user can confirm it."""
         try:
@@ -39,6 +41,10 @@ class TvLoginCheck:
             _, stdout, _ = client.exec_command(self.TOOLS_COMMAND, timeout=10)
             if stdout.channel.recv_exit_status() != 0:
                 raise LocalizedError('error.login.tools_missing')
+            # Which TV this is: its backups live in their own folder.
+            identity = TvIdentity.read(client)
         finally:
             client.close()
-        return {'ok': True, 'host': host}
+        tv = {'id': TvBackupStore.tv_id(identity, host, port), 'model': identity.model if identity else None,
+              'serial': identity.serial if identity else None}
+        return {'ok': True, 'host': host, 'tv': tv}

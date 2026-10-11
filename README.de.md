@@ -4,7 +4,7 @@
 
 [English](README.md) · **Deutsch**
 
-**Aktuelle Version: v0.6.3.** Zuletzt vollständig am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). Mit v0.6.0 wurden Neunummerierungen (Verschieben und Tauschen, ohne dass der TV umschaltet) und das Umbenennen einer Liste am TV bestätigt; Kopien mit Listenübernahme sind dort noch nicht erprobt. v0.6.1 bündelt Export und Import in je einem Dialog; ein Import stellt ein Backup auf der aktuellen Arbeitskopie wieder her. v0.6.2 ergänzt ein Feld für den SSH-Port im TV-Login; v0.6.3 nutzt diesen Port auch bei der Übertragung.
+**Aktuelle Version: v0.6.4.** Zuletzt vollständig am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). Mit v0.6.0 wurden Neunummerierungen (Verschieben und Tauschen, ohne dass der TV umschaltet) und das Umbenennen einer Liste am TV bestätigt; Kopien mit Listenübernahme sind dort noch nicht erprobt. v0.6.1 bündelt Export und Import in je einem Dialog; ein Import stellt ein Backup auf der aktuellen Arbeitskopie wieder her. v0.6.2 ergänzt ein Feld für den SSH-Port im TV-Login; v0.6.3 nutzt diesen Port auch bei der Übertragung; v0.6.4 nimmt die LG Channels (IP) in die Listen auf, überträgt Listen aller Empfangsarten (Satellit, Kabel, Antenne, IP) und bietet eine Sortierung für die Liste der übrigen Sender.
 
 Browserbasierte, **lokal auf dem Computer laufende** Verwaltung der LG-webOS-Sender- und Favoritenlisten. Die Anwendung importiert eine SQLite-Sicherung des LG-TV per Root-SSH oder aus einer Datei, bearbeitet eine lokale Arbeitskopie und kann ausgewählte Änderungen **nach TV-Backup, Live-Abgleich, Vorschau und ausdrücklicher Bestätigung über LG-Luna-APIs zurückübertragen**. Eine laufende LG-SQLite- oder LevelDB-Datei wird niemals direkt überschrieben.
 
@@ -45,7 +45,7 @@ Images werden in der GitHub Container Registry für `linux/amd64` und `linux/arm
 | Tag | Inhalt |
 | --- | --- |
 | `ghcr.io/robnice/lg-webos-channel-editor:latest` | neueste Release-Version |
-| `ghcr.io/robnice/lg-webos-channel-editor:0.6.3` | eine feste Release-Version |
+| `ghcr.io/robnice/lg-webos-channel-editor:0.6.4` | eine feste Release-Version |
 | `ghcr.io/robnice/lg-webos-channel-editor:dev` | aktueller Entwicklungsstand, nur zum Testen |
 
 Ein Beispiel zum Kopieren ist [`docs/docker-compose.example.yml`](docs/docker-compose.example.yml): Host-Port (linke Zahl, Standard `8765`) und Host-Verzeichnis für `/app/data` anpassen, dann `docker compose up -d` (oder in das Compose-Plugin von OpenMediaVault einfügen) und `http://<server>:8765` öffnen.
@@ -56,12 +56,16 @@ Ein Beispiel zum Kopieren ist [`docs/docker-compose.example.yml`](docs/docker-co
 
 Releases entstehen automatisch: Ein Tag `vX.Y.Z` auf `main` (muss zu `version.py` passen) baut nach erfolgreichen Tests `:X.Y.Z` und `:latest`; jeder Push auf `dev` baut `:dev`.
 
-## Aktueller Funktionsumfang (v0.6.3)
+## Aktueller Funktionsumfang (v0.6.4)
 
 | Funktion | Stand |
 | --- | --- |
 | LG-Datenbank aus Datei oder per SSH importieren | Implementiert; TV-seitiger SQLite-Snapshot über `.backup` |
 | Favoritenlisten A–H anzeigen, Sender suchen/filtern (TV/Radio, Verschlüsselung, Empfangsart), hinzufügen/entfernen | Implementiert; TV-Übertragung über Luna |
+| Backup zurückspielen (Toolbar): Fernseher wählen, seine Sicherungen erscheinen nach Datum (neueste zuerst); die gewählte öffnet den gewohnten Wiederherstellen-Dialog (nur lokale Arbeitskopie) | Implementiert |
+| Liste der übrigen Sender sortieren (Name, Nummer, Empfangsart, Satellit, frei vor verschlüsselt; im Browser gemerkt) | Implementiert |
+| IP-Sender (Streams von LG Channels) als Empfangsart „IP (LG Channels)“ | In Listen aufnehmen, entfernen und sortieren wie alle anderen Sender; Übertragung zum TV mit denselben Aufrufen. Die Programmnummer ist gesperrt (der TV kann LG Channels nicht umnummerieren). Jeder Abruf vom TV übernimmt neue IP-Sender und entfernt gelöschte, lokale Listenänderungen bleiben erhalten. Übertragung von IP- und Kabelsendern am TV noch nicht erprobt |
+| Übertragung aller Empfangsarten | Listen und Nummern von Satelliten-, Kabel- und Antennensendern sowie die Listen der IP-Sender; Programmnummern sind je Empfangsart eindeutig. Der TV wird wie von LGs eigener Senderbearbeitung abgefragt (`channelMode` `["Tuner", "IP"]`) |
 | Sender innerhalb einer Favoritenliste sortieren | Implementiert; TV-Übertragung und Zustandsprüfung |
 | Einzelne Sendernummer durch Klick auf die Nummer ändern | Implementiert; 1–99 für **neu vergebene** Nummern |
 | Belegte Sendernummer vergeben | Unterstützter **Platztausch**, sofern eindeutig und zulässig |
@@ -105,7 +109,7 @@ Die Oberfläche und alle Meldungen gibt es derzeit auf **Deutsch** und **Englisc
 | `data/before-single-number.sqlite` | Sicherung vor lokaler manueller Nummernänderung |
 | `data/before-tv-adopt.sqlite` | Sicherung vor Übernahme von Sendern, die der TV selbst angelegt hat |
 | `data/before-file-import.sqlite` | Sicherung vor dem Wiederherstellen einer Backup-Datei auf die Arbeitskopie |
-| `data/tv-backups/tv-*.sqlite` | Zeitgestempelte TV-Sicherungen (Übertragungsvorschau, unmittelbar vor dem Schreiben, Neu-Einlesen vom TV); es bleiben nur die neuesten laut Einstellungen |
+| `data/tv-backups/<Modell>-<Seriennummer>/tv-*.sqlite` | Zeitgestempelte TV-Sicherungen (Übertragungsvorschau, unmittelbar vor dem Schreiben, Neu-Einlesen vom TV), je Fernseher ein Ordner (Modell und Seriennummer, vom TV gelesen; ersatzweise `host-<IP>_<Port>`), mit `tv.json` (Modell, Seriennummer, letzte IP und Port); es bleiben je Fernseher nur die neuesten laut Einstellungen |
 | `data/settings.json` | Einstellungen (Anzahl aufbewahrter TV-Sicherungen) |
 | `data/known_hosts` | Im Login-Dialog bestätigte SSH-Hostschlüssel von TVs |
 
@@ -139,6 +143,9 @@ tv_groups.py                 Überträgt umbenannte Favoritenlisten (setGroupNam
 tv_login.py                  Prüft die TV-Anmeldung (SSH, benötigte Werkzeuge) einmal pro Seitenaufruf
 tv_ping.py                   Erreichbarkeit des TV für den Online-Status (TCP zum SSH-Port, ohne Login)
 tv_address.py                SSH-Port des TV: Standard (22) und Prüfung an einer Stelle
+ip_channels.py               IP-Sender (LG Channels, Tabelle ip): Zeilen mit gesperrter Nummer, lokale Tabelle beim TV-Abruf
+tv_identity.py               Identität eines TV (Modell + Seriennummer per luna-send, nur lesend)
+tv_backups.py                TV-Sicherungen je Fernseher in einem Ordner: Liste, Begrenzung je TV
 tv_hostkeys.py               SSH-Hostschlüssel: System-known_hosts plus beim Login bestätigte Fingerprints (data/known_hosts)
 requirements.txt             Python-Abhängigkeit (paramiko)
 Dockerfile, .dockerignore    Container-Image; Beispiel in docs/docker-compose.example.yml
@@ -159,7 +166,7 @@ tests/                       Automatisierte Regressionstests
 data/                        Lokale SQLite-Daten und Backups (nicht versionieren)
 ```
 
-Beispielhafte HTTP-Endpunkte: `GET /api/status`, `GET /api/channels`, `GET /api/renumber/preview`, `POST /api/import` (Upload und Analyse), `POST /api/import-plan`, `POST /api/import-apply`, `GET /download/<sqlite|csv|json>?lists=…&channels=all|lists&names=0|1&numbers=0|1&raw=0|1`, `POST /api/import-tv`, `POST /api/channel-number`, `POST /api/renumber`, `POST /api/tv-write-preview`, `POST /api/tv-write-commit` (startet einen Hintergrund-Job), `GET /api/tv-write-status`, `POST /api/tv-write-cancel` und `POST /api/tv-sync-report`, `GET`/`POST /api/settings`, `GET /api/tv-ping`. Die Web-App arbeitet ausschließlich über den lokalen HTTP-Server; die Verbindung zum LG übernimmt Python/Paramiko.
+Beispielhafte HTTP-Endpunkte: `GET /api/status`, `GET /api/channels`, `GET /api/renumber/preview`, `POST /api/import` (Upload und Analyse), `POST /api/import-plan`, `POST /api/import-apply`, `GET /download/<sqlite|csv|json>?lists=…&channels=all|lists&names=0|1&numbers=0|1&raw=0|1`, `POST /api/import-tv`, `POST /api/channel-number`, `POST /api/renumber`, `POST /api/tv-write-preview`, `POST /api/tv-write-commit` (startet einen Hintergrund-Job), `GET /api/tv-write-status`, `POST /api/tv-write-cancel` und `POST /api/tv-sync-report`, `GET`/`POST /api/settings`, `GET /api/tv-ping`, `GET /api/tv-backups[?tv=…]`, `POST /api/tv-backups/restore`. Die Web-App arbeitet ausschließlich über den lokalen HTTP-Server; die Verbindung zum LG übernimmt Python/Paramiko.
 
 ### Tests
 
@@ -171,7 +178,7 @@ Für Änderungen an Nummerierung, Identität und TV-Schreibpfad müssen insbeson
 
 ### Versions- und Dokumentationspflege
 
-- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus und ändert Nummern über `iepg` (Neunummerierung und Listen-Umbenennung am TV bestätigt); v0.6.1 bündelt Export und Import in je einem Dialog und stellt Backups auf der aktuellen Arbeitskopie wieder her; v0.6.2 ergänzt den SSH-Port im TV-Login, den v0.6.3 auch für die Übertragung nutzt.
+- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus und ändert Nummern über `iepg` (Neunummerierung und Listen-Umbenennung am TV bestätigt); v0.6.1 bündelt Export und Import in je einem Dialog und stellt Backups auf der aktuellen Arbeitskopie wieder her; v0.6.2 ergänzt den SSH-Port im TV-Login, den v0.6.3 auch für die Übertragung nutzt; v0.6.4 nimmt die LG Channels in die Listen auf, überträgt alle Empfangsarten und sortiert die Liste der übrigen Sender.
 - Bei künftigen App-Releases `APP_VERSION` in `version.py`, beide READMEs und Tests konsistent halten. `?v=` und der Versions-Chip werden automatisch aus `version.py` gesetzt. Keine ungültigen verschachtelten `<script>`-/`<style>`-Tags erzeugen.
 
 ## Lizenz

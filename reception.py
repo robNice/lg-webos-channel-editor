@@ -7,9 +7,10 @@ from i18n import Message
 
 
 class ReceptionMode:
-    CODES = ('satellite', 'cable', 'terrestrial', 'other')
+    CODES = ('satellite', 'cable', 'terrestrial', 'ip', 'other')
     _ALIASES = {'satellite': 'satellite', 'cable': 'cable',
-                'terrestrial': 'terrestrial', 'antenna': 'terrestrial'}
+                'terrestrial': 'terrestrial', 'antenna': 'terrestrial',
+                'ip': 'ip'}
 
     @classmethod
     def code(cls, mode_name):

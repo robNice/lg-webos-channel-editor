@@ -1,12 +1,13 @@
 """Read-only comparison of a TV SQLite snapshot with the local working copy."""
 from i18n import Message
-from tv_write import GROUPS
+from tv_write import GROUPS, channel_tables
 
 NO_VISIBLE_CHANGE = Message('compare.no_visible_change')
 
 
 class ChannelStateComparison:
-    """Compares ``tuner_on`` entries keyed by (dvc_chan_id, mso_prdt_itm_code).
+    """Compares channel entries (``tuner_on`` and LG Channels in ``ip``)
+    keyed by (dvc_chan_id, mso_prdt_itm_code).
 
     ``changed``/``added``/``removed`` count raw differences in number and
     favorite columns; ``details`` names the affected channels for the UI.
@@ -24,8 +25,9 @@ class ChannelStateComparison:
 
     def _snapshot(self, conn):
         favorite_columns = ', '.join(f'fav_chan_gr_{g.lower()}, favoriteIdx{g}' for g in self.groups)
-        rows = conn.execute('SELECT dvc_chan_id, mso_prdt_itm_code, chan_std_name, chan_no, chan_no_int, '
-                            + favorite_columns + ' FROM tuner_on ORDER BY dvc_chan_id, mso_prdt_itm_code').fetchall()
+        rows = [r for table in channel_tables(conn)
+                for r in conn.execute('SELECT dvc_chan_id, mso_prdt_itm_code, chan_std_name, chan_no, chan_no_int, '
+                                      + favorite_columns + f' FROM {table} ORDER BY dvc_chan_id, mso_prdt_itm_code')]
         return {(r[0], r[1]): self._entry(r) for r in rows}
 
     def _entry(self, row):

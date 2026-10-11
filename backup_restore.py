@@ -251,7 +251,7 @@ class BackupSnapshot:
 
 
 class RestorePlanner:
-    """Maps a BackupSnapshot onto the current channels (app.channel_rows)."""
+    """Maps a BackupSnapshot onto the current channels (app.all_channel_rows)."""
 
     def __init__(self, snapshot, current, current_names, is_default_name=lambda group, name: False):
         self.snapshot = snapshot
@@ -344,7 +344,7 @@ class RestorePlanner:
             raise LocalizedError('error.import.numbers_not_in_file')
         plan = {'lists': {g: self._list_ids(g) for g in lists},
                 'names': {g: self._name(g) for g in names if self._name(g)},
-                'numbers': {'changes': [], 'kept': [], 'conflicts': [], 'displacedFavorites': []}}
+                'numbers': {'changes': [], 'kept': [], 'locked': [], 'conflicts': [], 'displacedFavorites': []}}
         if numbers:
             self._plan_numbers(lists, plan['numbers'])
         return plan
@@ -357,6 +357,10 @@ class RestorePlanner:
                 if cid is None or cid in desired or b['number'] is None:
                     continue
                 current = self.current[cid]
+                if b['number'] != as_int(current['number']) and current.get('numberLocked'):
+                    # LG Channels keep their number (the TV cannot renumber them).
+                    result['locked'].append(current['name'])
+                    continue
                 if b['number'] != as_int(current['number']) and not 1 <= b['number'] <= MAX_NUMBER:
                     result['kept'].append(current['name'])
                     continue

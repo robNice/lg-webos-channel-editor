@@ -4,7 +4,7 @@
 
 **English** · [Deutsch](README.de.md)
 
-**Current version: v0.6.3.** Last version fully confirmed on a real TV: **v0.5.24** (October 10, 2026). With v0.6.0, renumbering transfers (moves and swaps without the TV switching channels) and renaming a list were confirmed on the TV; copies with list migration have not yet been exercised there. v0.6.1 adds one export and one import dialog; an import restores a backup onto the current working copy. v0.6.2 adds an SSH port field to the TV login; v0.6.3 makes the transfer use that port too.
+**Current version: v0.6.4.** Last version fully confirmed on a real TV: **v0.5.24** (October 10, 2026). With v0.6.0, renumbering transfers (moves and swaps without the TV switching channels) and renaming a list were confirmed on the TV; copies with list migration have not yet been exercised there. v0.6.1 adds one export and one import dialog; an import restores a backup onto the current working copy. v0.6.2 adds an SSH port field to the TV login; v0.6.3 makes the transfer use that port too; v0.6.4 adds the LG Channels (IP) to the lists, transfers lists of every reception mode (satellite, cable, antenna, IP) and adds a sort order for the list of other channels.
 
 Browser-based management of LG webOS channel and favorite lists that **runs locally on your computer**. The application imports an SQLite backup of the LG TV via root SSH or from a file, edits a local working copy and can transfer selected changes back **via LG Luna APIs after a TV backup, live comparison, preview and explicit confirmation**. A running LG SQLite or LevelDB file is never overwritten directly.
 
@@ -45,7 +45,7 @@ Images are published on the GitHub Container Registry for `linux/amd64` and `lin
 | Tag | Content |
 | --- | --- |
 | `ghcr.io/robnice/lg-webos-channel-editor:latest` | latest release |
-| `ghcr.io/robnice/lg-webos-channel-editor:0.6.3` | a fixed release version |
+| `ghcr.io/robnice/lg-webos-channel-editor:0.6.4` | a fixed release version |
 | `ghcr.io/robnice/lg-webos-channel-editor:dev` | current development state, for tests only |
 
 A ready-to-copy example is [`docs/docker-compose.example.yml`](docs/docker-compose.example.yml): adjust the host port (left number, default `8765`) and the host directory for `/app/data`, then run `docker compose up -d` (or paste it into the OpenMediaVault Compose plugin) and open `http://<server>:8765`.
@@ -56,12 +56,16 @@ A ready-to-copy example is [`docs/docker-compose.example.yml`](docs/docker-compo
 
 Releases are built automatically: a tag `vX.Y.Z` on `main` (must match `version.py`) builds `:X.Y.Z` and `:latest` after the tests passed; every push to `dev` builds `:dev`.
 
-## Current features (v0.6.3)
+## Current features (v0.6.4)
 
 | Feature | Status |
 | --- | --- |
 | Import the LG database from a file or via SSH | Implemented; TV-side SQLite snapshot via `.backup` |
 | Show favorite lists A–H, search/filter channels (TV/radio, encryption, reception mode), add/remove | Implemented; transfer to the TV via Luna |
+| Restore backup (toolbar): choose a TV, its backups are listed newest first; the chosen one opens the usual restore dialog (local working copy only) | Implemented |
+| Sort the list of other channels (name, number, reception mode, satellite, free before encrypted; remembered in the browser) | Implemented |
+| IP channels (LG Channels streams) as reception mode “IP (LG Channels)” | Add to lists, remove and sort like every other channel; transferred to the TV with the same calls. Their programme number is locked (the TV cannot renumber LG Channels). Every read from the TV takes over new IP channels and drops deleted ones, local list changes stay. Transferring IP and cable channels is not yet confirmed on the TV |
+| Transfer of all reception modes | Lists and numbers of satellite, cable and antenna channels and the lists of IP channels; programme numbers are unique per reception mode. The TV is asked like LG's own channel editor (`channelMode` `["Tuner", "IP"]`) |
 | Sort channels within a favorite list | Implemented; transfer to the TV with state verification |
 | Change a single channel number by clicking the number | Implemented; 1–99 for **newly assigned** numbers |
 | Assign an occupied channel number | Supported **slot swap**, if unambiguous and permitted |
@@ -105,7 +109,7 @@ The user interface and all messages are currently available in **English** and *
 | `data/before-single-number.sqlite` | Backup before a local manual number change |
 | `data/before-tv-adopt.sqlite` | Backup before taking over channels the TV created by itself |
 | `data/before-file-import.sqlite` | Backup before restoring a backup file onto the working copy |
-| `data/tv-backups/tv-*.sqlite` | Timestamped TV backups (transfer preview, right before writing, reloads from the TV); only the newest ones are kept as set in the settings |
+| `data/tv-backups/<model>-<serial>/tv-*.sqlite` | Timestamped TV backups (transfer preview, right before writing, reloads from the TV), one folder per TV (model and serial number, read from the TV; fallback `host-<ip>_<port>`), with `tv.json` (model, serial, last IP and port); only the newest ones per TV are kept as set in the settings |
 | `data/settings.json` | Settings (number of TV backups to keep) |
 | `data/known_hosts` | SSH host keys of TVs confirmed in the login dialog |
 
@@ -139,6 +143,9 @@ tv_groups.py                 Transfers renamed favorite lists (setGroupName, ver
 tv_login.py                  Checks the TV login (SSH, required tools) once per page view
 tv_ping.py                   TV reachability for the online status (TCP to the SSH port, no login)
 tv_address.py                SSH port of the TV: default (22) and validation in one place
+ip_channels.py               IP channels (LG Channels, table ip): rows with locked number, local table on TV read
+tv_identity.py               Identity of a TV (model + serial number via luna-send, read-only)
+tv_backups.py                TV backups in one folder per TV: list, limit per TV
 tv_hostkeys.py               SSH host keys: system known_hosts plus fingerprints confirmed at login (data/known_hosts)
 requirements.txt             Python dependency (paramiko)
 Dockerfile, .dockerignore    Container image; docs/docker-compose.example.yml as example
@@ -159,7 +166,7 @@ tests/                       Automated regression tests
 data/                        Local SQLite data and backups (do not version)
 ```
 
-Example HTTP endpoints: `GET /api/status`, `GET /api/channels`, `GET /api/renumber/preview`, `POST /api/import` (upload and analysis), `POST /api/import-plan`, `POST /api/import-apply`, `GET /download/<sqlite|csv|json>?lists=…&channels=all|lists&names=0|1&numbers=0|1&raw=0|1`, `POST /api/import-tv`, `POST /api/channel-number`, `POST /api/renumber`, `POST /api/tv-write-preview`, `POST /api/tv-write-commit` (starts a background job), `GET /api/tv-write-status`, `POST /api/tv-write-cancel` and `POST /api/tv-sync-report`, `GET`/`POST /api/settings`, `GET /api/tv-ping`. The web app works exclusively through the local HTTP server; Python/Paramiko handles the connection to the LG.
+Example HTTP endpoints: `GET /api/status`, `GET /api/channels`, `GET /api/renumber/preview`, `POST /api/import` (upload and analysis), `POST /api/import-plan`, `POST /api/import-apply`, `GET /download/<sqlite|csv|json>?lists=…&channels=all|lists&names=0|1&numbers=0|1&raw=0|1`, `POST /api/import-tv`, `POST /api/channel-number`, `POST /api/renumber`, `POST /api/tv-write-preview`, `POST /api/tv-write-commit` (starts a background job), `GET /api/tv-write-status`, `POST /api/tv-write-cancel` and `POST /api/tv-sync-report`, `GET`/`POST /api/settings`, `GET /api/tv-ping`, `GET /api/tv-backups[?tv=…]`, `POST /api/tv-backups/restore`. The web app works exclusively through the local HTTP server; Python/Paramiko handles the connection to the LG.
 
 ### Tests
 
@@ -171,7 +178,7 @@ For changes to numbering, identity and the TV write path, the tests for slot swa
 
 ### Version and documentation maintenance
 
-- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; v0.5.26 shows and filters the reception mode (satellite, cable, antenna); v0.6.0 runs the transfer as a background job with progress dialog, cancellation and automatic re-import and changes numbers via `iepg` (renumbering and list renaming confirmed on the TV); v0.6.1 combines export and import into one dialog each and restores backups onto the current working copy; v0.6.2 adds the SSH port to the TV login, which v0.6.3 also uses for the transfer.
+- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; v0.5.26 shows and filters the reception mode (satellite, cable, antenna); v0.6.0 runs the transfer as a background job with progress dialog, cancellation and automatic re-import and changes numbers via `iepg` (renumbering and list renaming confirmed on the TV); v0.6.1 combines export and import into one dialog each and restores backups onto the current working copy; v0.6.2 adds the SSH port to the TV login, which v0.6.3 also uses for the transfer; v0.6.4 adds the LG Channels to the lists, transfers every reception mode and sorts the list of other channels.
 - For future app releases, keep `APP_VERSION` in `version.py`, both READMEs and the tests consistent. `?v=` and the version chip are set automatically from `version.py`. Do not create invalid nested `<script>`/`<style>` tags.
 
 ## License
