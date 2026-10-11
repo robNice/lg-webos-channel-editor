@@ -7,6 +7,7 @@ import re
 import socket
 
 from i18n import LocalizedError
+from tv_address import SshPort
 
 HOST_PATTERN = re.compile(r'[a-zA-Z0-9.:-]{1,253}')
 
@@ -17,11 +18,10 @@ class TvPing:
     def __init__(self, connect=socket.create_connection):
         self.connect = connect
 
-    def online(self, host, port=22):
+    def online(self, host, port=SshPort.DEFAULT):
         if not isinstance(host, str) or not HOST_PATTERN.fullmatch(host):
             raise LocalizedError('error.ssh.invalid_host')
-        if type(port) is not int or not 1 <= port <= 65535:
-            raise LocalizedError('error.ssh.invalid_port')
+        SshPort.validate(port)
         try:
             sock = self.connect((host, port), timeout=self.TIMEOUT)
         except OSError:

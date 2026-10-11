@@ -4,7 +4,7 @@
 
 [English](README.md) · **Deutsch**
 
-**Aktuelle Version: v0.6.2.** Zuletzt vollständig am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). Mit v0.6.0 wurden Neunummerierungen (Verschieben und Tauschen, ohne dass der TV umschaltet) und das Umbenennen einer Liste am TV bestätigt; Kopien mit Listenübernahme sind dort noch nicht erprobt. v0.6.1 bündelt Export und Import in je einem Dialog; ein Import stellt ein Backup auf der aktuellen Arbeitskopie wieder her. v0.6.2 ergänzt ein Feld für den SSH-Port im TV-Login.
+**Aktuelle Version: v0.6.3.** Zuletzt vollständig am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). Mit v0.6.0 wurden Neunummerierungen (Verschieben und Tauschen, ohne dass der TV umschaltet) und das Umbenennen einer Liste am TV bestätigt; Kopien mit Listenübernahme sind dort noch nicht erprobt. v0.6.1 bündelt Export und Import in je einem Dialog; ein Import stellt ein Backup auf der aktuellen Arbeitskopie wieder her. v0.6.2 ergänzt ein Feld für den SSH-Port im TV-Login; v0.6.3 nutzt diesen Port auch bei der Übertragung.
 
 Browserbasierte, **lokal auf dem Computer laufende** Verwaltung der LG-webOS-Sender- und Favoritenlisten. Die Anwendung importiert eine SQLite-Sicherung des LG-TV per Root-SSH oder aus einer Datei, bearbeitet eine lokale Arbeitskopie und kann ausgewählte Änderungen **nach TV-Backup, Live-Abgleich, Vorschau und ausdrücklicher Bestätigung über LG-Luna-APIs zurückübertragen**. Eine laufende LG-SQLite- oder LevelDB-Datei wird niemals direkt überschrieben.
 
@@ -45,7 +45,7 @@ Images werden in der GitHub Container Registry für `linux/amd64` und `linux/arm
 | Tag | Inhalt |
 | --- | --- |
 | `ghcr.io/robnice/lg-webos-channel-editor:latest` | neueste Release-Version |
-| `ghcr.io/robnice/lg-webos-channel-editor:0.6.2` | eine feste Release-Version |
+| `ghcr.io/robnice/lg-webos-channel-editor:0.6.3` | eine feste Release-Version |
 | `ghcr.io/robnice/lg-webos-channel-editor:dev` | aktueller Entwicklungsstand, nur zum Testen |
 
 Ein Beispiel zum Kopieren ist [`docs/docker-compose.example.yml`](docs/docker-compose.example.yml): Host-Port (linke Zahl, Standard `8765`) und Host-Verzeichnis für `/app/data` anpassen, dann `docker compose up -d` (oder in das Compose-Plugin von OpenMediaVault einfügen) und `http://<server>:8765` öffnen.
@@ -56,7 +56,7 @@ Ein Beispiel zum Kopieren ist [`docs/docker-compose.example.yml`](docs/docker-co
 
 Releases entstehen automatisch: Ein Tag `vX.Y.Z` auf `main` (muss zu `version.py` passen) baut nach erfolgreichen Tests `:X.Y.Z` und `:latest`; jeder Push auf `dev` baut `:dev`.
 
-## Aktueller Funktionsumfang (v0.6.2)
+## Aktueller Funktionsumfang (v0.6.3)
 
 | Funktion | Stand |
 | --- | --- |
@@ -138,6 +138,7 @@ tv_inventory.py              Übernimmt vom TV selbst angelegte Sender; lädt ei
 tv_groups.py                 Überträgt umbenannte Favoritenlisten (setGroupName, Prüfung in der TV-Datenbank)
 tv_login.py                  Prüft die TV-Anmeldung (SSH, benötigte Werkzeuge) einmal pro Seitenaufruf
 tv_ping.py                   Erreichbarkeit des TV für den Online-Status (TCP zum SSH-Port, ohne Login)
+tv_address.py                SSH-Port des TV: Standard (22) und Prüfung an einer Stelle
 tv_hostkeys.py               SSH-Hostschlüssel: System-known_hosts plus beim Login bestätigte Fingerprints (data/known_hosts)
 requirements.txt             Python-Abhängigkeit (paramiko)
 Dockerfile, .dockerignore    Container-Image; Beispiel in docs/docker-compose.example.yml
@@ -170,7 +171,7 @@ Für Änderungen an Nummerierung, Identität und TV-Schreibpfad müssen insbeson
 
 ### Versions- und Dokumentationspflege
 
-- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus und ändert Nummern über `iepg` (Neunummerierung und Listen-Umbenennung am TV bestätigt); v0.6.1 bündelt Export und Import in je einem Dialog und stellt Backups auf der aktuellen Arbeitskopie wieder her; v0.6.2 ergänzt den SSH-Port im TV-Login.
+- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus und ändert Nummern über `iepg` (Neunummerierung und Listen-Umbenennung am TV bestätigt); v0.6.1 bündelt Export und Import in je einem Dialog und stellt Backups auf der aktuellen Arbeitskopie wieder her; v0.6.2 ergänzt den SSH-Port im TV-Login, den v0.6.3 auch für die Übertragung nutzt.
 - Bei künftigen App-Releases `APP_VERSION` in `version.py`, beide READMEs und Tests konsistent halten. `?v=` und der Versions-Chip werden automatisch aus `version.py` gesetzt. Keine ungültigen verschachtelten `<script>`-/`<style>`-Tags erzeugen.
 
 ## Lizenz

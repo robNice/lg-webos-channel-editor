@@ -212,22 +212,24 @@ class SyncReport{
 const HOST_KEY='lg-favoriten-editor-tv-hosts';
 function knownHosts(){try{const v=JSON.parse(localStorage.getItem(HOST_KEY)||'[]');return Array.isArray(v)?v.filter(s=>typeof s==='string').slice(0,12):[]}catch{return []}}
 const PORT_KEY='lg-favoriten-editor-tv-ports';
+// Same default as tv_address.SshPort.DEFAULT (test_ssh_port_062 checks it).
+const DEFAULT_SSH_PORT=22;
 function knownPorts(){try{const v=JSON.parse(localStorage.getItem(PORT_KEY)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:{}}catch{return {}}}
-function knownPort(host){const port=knownPorts()[host];return Number.isInteger(port)&&port>=1&&port<=65535?port:22;}
-function rememberHost(host,port=22){if(!host)return;try{localStorage.setItem(HOST_KEY,JSON.stringify([host,...knownHosts().filter(h=>h!==host)].slice(0,12)));const ports=knownPorts();ports[host]=port;localStorage.setItem(PORT_KEY,JSON.stringify(ports))}catch{}}
+function knownPort(host){const port=knownPorts()[host];return Number.isInteger(port)&&port>=1&&port<=65535?port:DEFAULT_SSH_PORT;}
+function rememberHost(host,port=DEFAULT_SSH_PORT){if(!host)return;try{localStorage.setItem(HOST_KEY,JSON.stringify([host,...knownHosts().filter(h=>h!==host)].slice(0,12)));const ports=knownPorts();ports[host]=port;localStorage.setItem(PORT_KEY,JSON.stringify(ports))}catch{}}
 // TV login for this page view: host and password live only in this object
 // (memory) until the page is reloaded or the user logs out. The server checks
 // the connection (/api/tv-login) but stores nothing.
 class TvSession{
  // Reachability of the TV (SSH port only, never with the password).
  static PING_INTERVAL=30000;
- constructor(){this.host=null;this.password=null;this.port=22;this.state='disconnected';this.checked=null;this.timer=null;}
+ constructor(){this.host=null;this.password=null;this.port=DEFAULT_SSH_PORT;this.state='disconnected';this.checked=null;this.timer=null;}
  get active(){return !!(this.host&&this.password);}
  // Credentials for a TV action; asks for a login first if there is none.
  async credentials(){if(!this.active&&!await this.login())return null;return {host:this.host,password:this.password,port:this.port};}
  login(){return new Promise(resolve=>{
    const form=document.createElement('form');form.className='login-form';
-   form.innerHTML=`<p class="login-intro">${esc(t('login.intro'))}</p><div class="login-address"><div><label for="login-host">${esc(t('tv.dialog.host'))}</label><input class="search" id="login-host" list="login-hosts" required autocomplete="off"><datalist id="login-hosts"></datalist></div><div><label for="login-port">${esc(t('tv.dialog.port'))}</label><input class="search" id="login-port" type="number" min="1" max="65535" step="1" value="22" required autocomplete="off"></div></div><label for="login-pass">${esc(t('tv.dialog.password'))}</label><input class="search" id="login-pass" type="password" required autocomplete="off"><p class="login-status" role="status" aria-live="polite"></p><button type="submit" hidden></button>`;
+   form.innerHTML=`<p class="login-intro">${esc(t('login.intro'))}</p><div class="login-address"><div><label for="login-host">${esc(t('tv.dialog.host'))}</label><input class="search" id="login-host" list="login-hosts" required autocomplete="off"><datalist id="login-hosts"></datalist></div><div><label for="login-port">${esc(t('tv.dialog.port'))}</label><input class="search" id="login-port" type="number" min="1" max="65535" step="1" value="${DEFAULT_SSH_PORT}" required autocomplete="off"></div></div><label for="login-pass">${esc(t('tv.dialog.password'))}</label><input class="search" id="login-pass" type="password" required autocomplete="off"><p class="login-status" role="status" aria-live="polite"></p><button type="submit" hidden></button>`;
    const host=form.querySelector('#login-host'),port=form.querySelector('#login-port'),password=form.querySelector('#login-pass'),status=form.querySelector('.login-status');
    host.value=knownHosts()[0]||'';port.value=knownPort(host.value);
    form.querySelector('#login-hosts').replaceChildren(...knownHosts().map(h=>{const o=document.createElement('option');o.value=h;return o}));
@@ -271,7 +273,7 @@ class TvSession{
  }
  render(){
    const time=this.checked?this.checked.toLocaleTimeString(document.documentElement.lang):'';
-   const address=this.port===22?this.host:`${this.host}:${this.port}`;
+   const address=this.port===DEFAULT_SSH_PORT?this.host:`${this.host}:${this.port}`;
    const title=!this.active?t('session.disconnected'):this.state==='online'?t('session.online',{host:address,time}):this.state==='offline'?t('session.offline',{host:address,time}):t('session.checking');
    const label=this.active?t('session.connected',{host:address}):t('session.disconnected');
    $('#tvsession').innerHTML=`<span class="session-chip" data-state="${this.state}" title="${esc(title)}" role="status"><svg class="icon" aria-hidden="true"><use href="#i-tv"/></svg><span>${esc(label)}</span><span class="status-dot" aria-hidden="true"></span></span>`;
@@ -348,12 +350,11 @@ function describeOperation(o){
 }
 $('#tvwrite').onclick=async()=>{
  const credentials=await session.credentials();if(!credentials)return;
- const {host,password}=credentials;
  const btn=$('#tvwrite');btn.disabled=true;
  const waiting=new ProgressDialog(t('tv.progress.title')).open();
  waiting.update({step:t('tv.progress.previewing'),text:t('tv.progress.previewing_detail')});
  try{
-   let preview;try{preview=await api('/api/tv-write-preview',{host,password});}finally{waiting.close();}
+   let preview;try{preview=await api('/api/tv-write-preview',credentials);}finally{waiting.close();}
    const adopted=(preview.adoptedChannels?.length?t('tv.write.adopted',{count:preview.adoptedChannels.length,channels:preview.adoptedChannels.map(n=>n||t('tv.write.unnamed')).join(', ')})+'\n\n':'')+
      (preview.removedChannels?.length?t('tv.write.removed',{count:preview.removedChannels.length,channels:preview.removedChannels.map(n=>n||t('tv.write.unnamed')).join(', ')})+'\n\n':'');
    if(adopted)await refresh();
@@ -363,7 +364,7 @@ $('#tvwrite').onclick=async()=>{
    const copyNote=preview.operations.some(o=>['copy_favorite','reuse_copy_favorite'].includes(o.type))?'\n'+t('tv.write.copy_note')+'\n':'';
    const msg=adopted+t('tv.write.backup_line',{backup:preview.backup})+'\n\n'+t('tv.write.planned',{total:preview.total})+'\n'+lines.join('\n')+(preview.total>35?'\n…':'')+'\n\n'+(cautions?t('tv.write.cautions')+'\n'+cautions+'\n\n':'')+preview.warning+copyNote+'\n\n'+t('tv.write.question');
    if(!confirm(msg)){note(t('status.tv_write_cancelled'));return;}
-   const {job}=await api('/api/tv-write-commit',{host,password,token:preview.token});
+   const {job}=await api('/api/tv-write-commit',{...credentials,token:preview.token});
    const result=await new TvWriteProgress(job).run();
    if(result.reimport==='ok')await refresh();
  }catch(e){note(e.message,true);alert(t('tv.write.failed',{error:e.message}))}finally{btn.disabled=false;}

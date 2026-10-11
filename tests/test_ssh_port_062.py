@@ -82,5 +82,43 @@ class LoginDialogPortTests(unittest.TestCase):
             self.assertIn('tv.dialog.port', catalog)
 
 
+class NoHardcodedPortTests(unittest.TestCase):
+    """Regression: the transfer sent only host and password, so the backend
+    fell back to port 22 although the user logged in with another port."""
+    SOURCES = ('app.py', 'tv_login.py', 'tv_ping.py', 'static/app.js')
+
+    def test_port_22_only_in_the_constants(self):
+        for name in self.SOURCES:
+            source = (ROOT / name).read_text(encoding='utf-8')
+            self.assertNotRegex(source, r"port\W{0,4}=\s*22\b|'port',\s*\[?'?22|\?port:22|===22\b|:22;", name)
+        self.assertIn('DEFAULT = 22', (ROOT / 'tv_address.py').read_text(encoding='utf-8'))
+        self.assertEqual(re.findall(r'.{0,20}(?<![\w.#-])22(?![\w.])', JS), ['st DEFAULT_SSH_PORT=22'])  # 20 chars before the literal
+
+    def test_js_constant_matches_python(self):
+        from tv_address import SshPort
+        self.assertRegex(JS, r'const DEFAULT_SSH_PORT=%d;' % SshPort.DEFAULT)
+
+    def test_every_tv_request_sends_the_session_credentials(self):
+        self.assertNotIn('{host,password}', JS)
+        for endpoint in ('tv-write-preview', 'tv-write-commit', 'tv-sync-report', 'tv-reload-channels',
+                         'tv-reload-groups', 'tv-reload-group', 'import-tv'):
+            for call in re.findall(r"api\('/api/%s',([^)]*)\)" % endpoint, JS):
+                self.assertIn('credentials', call, endpoint)
+
+    def test_handlers_use_one_port_helper(self):
+        source = (ROOT / 'app.py').read_text(encoding='utf-8')
+        self.assertEqual(source.count("data.get('port'"), 1)  # only inside request_port
+        self.assertGreaterEqual(source.count('request_port(data)'), 8)
+
+
+class SshPortTests(unittest.TestCase):
+    def test_validate(self):
+        from tv_address import SshPort
+        self.assertEqual(SshPort.validate(2222), 2222)
+        for port in (0, 65536, '22', None, True, 22.0):
+            with assert_raises_message(self, 'error.ssh.invalid_port'):
+                SshPort.validate(port)
+
+
 if __name__ == '__main__':
     unittest.main()

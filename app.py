@@ -25,6 +25,7 @@ from backup_restore import BackupSnapshot, ImportFormat, PendingUploads, Restore
 from backup_export import EditorExport, ExportOptions, RawTables
 from backup_retention import BackupRetention, Settings
 from tv_ping import TvPing
+from tv_address import SshPort
 from tv_hostkeys import TvHostKeys
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -97,7 +98,7 @@ def import_db(path):
 
 
 
-def import_from_tv(host, password, port=22, ssh_client_factory=None):
+def import_from_tv(host, password, port=SshPort.DEFAULT, ssh_client_factory=None):
     """Read-only TV-side SQLite snapshot over authenticated SSH/SFTP.
 
     The server-side .backup creates a consistent SQLite snapshot, including WAL.
@@ -107,8 +108,7 @@ def import_from_tv(host, password, port=22, ssh_client_factory=None):
         raise LocalizedError('error.ssh.invalid_host')
     if not isinstance(password, str) or not password:
         raise LocalizedError('error.ssh.password_missing')
-    if type(port) is not int or not 1 <= port <= 65535:
-        raise LocalizedError('error.ssh.invalid_port')
+    SshPort.validate(port)
     if ssh_client_factory is None:
         try:
             import paramiko
@@ -152,7 +152,12 @@ def host_keys():
     return TvHostKeys(DATA / 'known_hosts')
 
 
-def tv_ping(host, port=22):
+def request_port(data):
+    """SSH port of a TV request; the browser always sends the login port."""
+    return data.get('port', SshPort.DEFAULT)
+
+
+def tv_ping(host, port=SshPort.DEFAULT):
     return TvPing().online(host, port)
 
 
@@ -164,7 +169,7 @@ def backup_retention():
     return BackupRetention(DATA / 'tv-backups')
 
 
-def tv_sync_report(host, password, port=22, ssh_client_factory=None):
+def tv_sync_report(host, password, port=SshPort.DEFAULT, ssh_client_factory=None):
     """Read-only comparison TV <-> working copy ("Sync report"); the TV copy
     is temporary and deleted afterwards, no backup is kept."""
     result = tv_sync_preflight(host, password, port, ssh_client_factory, keep=False)
@@ -172,7 +177,7 @@ def tv_sync_report(host, password, port=22, ssh_client_factory=None):
     return result
 
 
-def tv_sync_preflight(host, password, port=22, ssh_client_factory=None, keep=True):
+def tv_sync_preflight(host, password, port=SshPort.DEFAULT, ssh_client_factory=None, keep=True):
     """Compare TV snapshot with working copy; NEVER replace running TV database.
 
     keep=True: a unique, consistent backup is retained locally even if the
@@ -185,8 +190,7 @@ def tv_sync_preflight(host, password, port=22, ssh_client_factory=None, keep=Tru
         raise LocalizedError('error.ssh.invalid_host')
     if not isinstance(password, str) or not password:
         raise LocalizedError('error.ssh.password_missing')
-    if type(port) is not int or not 1 <= port <= 65535:
-        raise LocalizedError('error.ssh.invalid_port')
+    SshPort.validate(port)
     if ssh_client_factory is None:
         try:
             import paramiko
@@ -243,13 +247,13 @@ def tv_sync_preflight(host, password, port=22, ssh_client_factory=None, keep=Tru
 SYNC_PLANS = {}
 
 
-def connect_tv(host, password, port=22, trust=None):
+def connect_tv(host, password, port=SshPort.DEFAULT, trust=None):
     """``trust``: fingerprint the user confirmed for a TV whose host key is
     not known yet (stored in data/known_hosts on success)."""
     if not isinstance(host,str) or not re.fullmatch(r'[a-zA-Z0-9.:-]{1,253}',host):
         raise LocalizedError('error.ssh.invalid_host')
     if not isinstance(password,str) or not password: raise LocalizedError('error.ssh.password_missing')
-    if type(port) is not int or not 1<=port<=65535: raise LocalizedError('error.ssh.invalid_port')
+    SshPort.validate(port)
     try: import paramiko
     except ImportError as exc: raise LocalizedError('error.ssh.paramiko_missing') from exc
     client=host_keys().client(trust)
@@ -258,7 +262,7 @@ def connect_tv(host, password, port=22, trust=None):
     return client
 
 
-def tv_snapshot_with_new_channels(host,password,port=22):
+def tv_snapshot_with_new_channels(host,password,port=SshPort.DEFAULT):
     """Fresh TV backup; channels the TV added are taken over, channels it
     deleted are dropped if they are in no local list."""
     check=tv_sync_preflight(host,password,port)
@@ -267,13 +271,13 @@ def tv_snapshot_with_new_channels(host,password,port=22):
     return Path(check['backedUp']),{'adoptedChannels':added,'removedChannels':sync.removed}
 
 
-def reload_tv_channels(host,password,port=22):
+def reload_tv_channels(host,password,port=SshPort.DEFAULT):
     with LOCK:
         _,inventory=tv_snapshot_with_new_channels(host,password,port)
         return {'ok':True,**inventory}
 
 
-def reload_tv_groups(host,password,confirm=False,port=22):
+def reload_tv_groups(host,password,confirm=False,port=SshPort.DEFAULT):
     """Replace ALL favorite lists A-H (members, order, names) by the TV
     version; differing lists only after explicit confirmation. One backup of
     the state before the first replaced list."""
@@ -289,7 +293,7 @@ def reload_tv_groups(host,password,confirm=False,port=22):
         return {'ok':True,'changed':[d['group'] for d in differences],**inventory}
 
 
-def reload_tv_group(host,password,group,confirm=False,port=22):
+def reload_tv_group(host,password,group,confirm=False,port=SshPort.DEFAULT):
     """Replace one favorite list by the TV version; a differing local list
     is only replaced after explicit confirmation."""
     if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
@@ -315,7 +319,7 @@ def preview_operation(o,baseline):
             'warning':o.get('warning')}
 
 
-def prepare_tv_write(host,password,port=22):
+def prepare_tv_write(host,password,port=SshPort.DEFAULT):
     with LOCK:
         # Channels the TV added by itself since the import (automatic channel
         # update while zapping) are taken over before planning.
@@ -1047,9 +1051,8 @@ class Handler(BaseHTTPRequestHandler):
             # No global lock: a reachability check must work during a transfer.
             try:
                 query = parse_qs(parsed.query)
-                port = query.get('port', ['22'])[0]
-                port = int(port) if port.isdigit() else -1
-                return self.reply({'online': tv_ping(query.get('host', [''])[0], port)})
+                port = query.get('port', [str(SshPort.DEFAULT)])[0]
+                return self.reply({'online': tv_ping(query.get('host', [''])[0], int(port) if port.isdigit() else -1)})
             except LocalizedError as e:
                 return self.fail(e, 400)
         if parsed.path == '/api/settings':
@@ -1121,36 +1124,36 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/import-apply':
                 return self.reply(apply_import(str(data.get('token')), data))
             if self.path == '/api/tv-write-preview':
-                return self.reply(prepare_tv_write(data.get('host'),data.get('password'),data.get('port',22)))
+                return self.reply(prepare_tv_write(data.get('host'),data.get('password'),request_port(data)))
             if self.path == '/api/tv-write-cancel':
                 job = TV_JOBS.get(str(data.get('job')))
                 if job is None: return self.fail(LocalizedError('error.sync.job_unknown'), 404)
                 return self.reply(job.cancel())
             if self.path == '/api/tv-write-commit':
-                job = start_tv_write(data.get('host'),data.get('password'),data.get('port',22),data.get('token'))
+                job = start_tv_write(data.get('host'),data.get('password'),request_port(data),data.get('token'))
                 return self.reply({'job': job.id}, 202)
             if self.path == '/api/tv-login':
                 # Late lookup of connect_tv keeps it replaceable in tests.
                 login = TvLoginCheck(lambda host, password, port, trust: connect_tv(host, password, port, trust))
                 trust = data.get('trust') if isinstance(data.get('trust'), str) else None
-                return self.reply(login.check(data.get('host'), data.get('password'), data.get('port', 22), trust))
+                return self.reply(login.check(data.get('host'), data.get('password'), request_port(data), trust))
             if self.path == '/api/tv-reload-channels':
-                return self.reply(reload_tv_channels(data.get('host'), data.get('password'), data.get('port', 22)))
+                return self.reply(reload_tv_channels(data.get('host'), data.get('password'), request_port(data)))
             if self.path == '/api/tv-reload-groups':
                 return self.reply(reload_tv_groups(data.get('host'), data.get('password'),
-                                                   data.get('confirm') is True, data.get('port', 22)))
+                                                   data.get('confirm') is True, request_port(data)))
             if self.path == '/api/tv-reload-group':
                 return self.reply(reload_tv_group(data.get('host'), data.get('password'), str(data.get('group')),
-                                                  data.get('confirm') is True, data.get('port', 22)))
+                                                  data.get('confirm') is True, request_port(data)))
             if self.path == '/api/tv-sync-report':
-                return self.reply(tv_sync_report(data.get('host'), data.get('password'), data.get('port', 22)))
+                return self.reply(tv_sync_report(data.get('host'), data.get('password'), request_port(data)))
             if self.path == '/api/settings':
                 with LOCK:
                     values = settings().save({'tvBackupsKeep': data.get('tvBackupsKeep')})
                     deleted = backup_retention().prune(values['tvBackupsKeep'])
                     return self.reply({'settings': values, 'deleted': len(deleted), 'backups': backup_retention().stats()})
             if self.path == '/api/import-tv':
-                import_from_tv(data.get('host'), data.get('password'), data.get('port', 22))
+                import_from_tv(data.get('host'), data.get('password'), request_port(data))
                 return self.reply({'ok': True})
             with LOCK:
                 number_result = None

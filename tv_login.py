@@ -4,6 +4,7 @@ Connects via SSH and verifies the tools the editor needs on the TV. Nothing is
 stored on the server; the browser keeps host and password in memory only.
 """
 from i18n import LocalizedError
+from tv_address import SshPort
 from tv_hostkeys import UnknownHostKey
 
 try:
@@ -20,7 +21,7 @@ class TvLoginCheck:
         client; ``trust`` is the confirmed fingerprint of an unknown TV."""
         self.connect = connect
 
-    def check(self, host, password, port=22, trust=None):
+    def check(self, host, password, port=SshPort.DEFAULT, trust=None):
         """{'ok': True, 'host': ...} or, for a TV whose SSH host key is not
         known yet, {'unknownHostKey': {host, fingerprint, keyType}} so the
         user can confirm it."""

@@ -4,7 +4,7 @@
 
 **English** · [Deutsch](README.de.md)
 
-**Current version: v0.6.2.** Last version fully confirmed on a real TV: **v0.5.24** (October 10, 2026). With v0.6.0, renumbering transfers (moves and swaps without the TV switching channels) and renaming a list were confirmed on the TV; copies with list migration have not yet been exercised there. v0.6.1 adds one export and one import dialog; an import restores a backup onto the current working copy. v0.6.2 adds an SSH port field to the TV login.
+**Current version: v0.6.3.** Last version fully confirmed on a real TV: **v0.5.24** (October 10, 2026). With v0.6.0, renumbering transfers (moves and swaps without the TV switching channels) and renaming a list were confirmed on the TV; copies with list migration have not yet been exercised there. v0.6.1 adds one export and one import dialog; an import restores a backup onto the current working copy. v0.6.2 adds an SSH port field to the TV login; v0.6.3 makes the transfer use that port too.
 
 Browser-based management of LG webOS channel and favorite lists that **runs locally on your computer**. The application imports an SQLite backup of the LG TV via root SSH or from a file, edits a local working copy and can transfer selected changes back **via LG Luna APIs after a TV backup, live comparison, preview and explicit confirmation**. A running LG SQLite or LevelDB file is never overwritten directly.
 
@@ -45,7 +45,7 @@ Images are published on the GitHub Container Registry for `linux/amd64` and `lin
 | Tag | Content |
 | --- | --- |
 | `ghcr.io/robnice/lg-webos-channel-editor:latest` | latest release |
-| `ghcr.io/robnice/lg-webos-channel-editor:0.6.2` | a fixed release version |
+| `ghcr.io/robnice/lg-webos-channel-editor:0.6.3` | a fixed release version |
 | `ghcr.io/robnice/lg-webos-channel-editor:dev` | current development state, for tests only |
 
 A ready-to-copy example is [`docs/docker-compose.example.yml`](docs/docker-compose.example.yml): adjust the host port (left number, default `8765`) and the host directory for `/app/data`, then run `docker compose up -d` (or paste it into the OpenMediaVault Compose plugin) and open `http://<server>:8765`.
@@ -56,7 +56,7 @@ A ready-to-copy example is [`docs/docker-compose.example.yml`](docs/docker-compo
 
 Releases are built automatically: a tag `vX.Y.Z` on `main` (must match `version.py`) builds `:X.Y.Z` and `:latest` after the tests passed; every push to `dev` builds `:dev`.
 
-## Current features (v0.6.2)
+## Current features (v0.6.3)
 
 | Feature | Status |
 | --- | --- |
@@ -138,6 +138,7 @@ tv_inventory.py              Takes over channels the TV added by itself; reloads
 tv_groups.py                 Transfers renamed favorite lists (setGroupName, verified in the TV database)
 tv_login.py                  Checks the TV login (SSH, required tools) once per page view
 tv_ping.py                   TV reachability for the online status (TCP to the SSH port, no login)
+tv_address.py                SSH port of the TV: default (22) and validation in one place
 tv_hostkeys.py               SSH host keys: system known_hosts plus fingerprints confirmed at login (data/known_hosts)
 requirements.txt             Python dependency (paramiko)
 Dockerfile, .dockerignore    Container image; docs/docker-compose.example.yml as example
@@ -170,7 +171,7 @@ For changes to numbering, identity and the TV write path, the tests for slot swa
 
 ### Version and documentation maintenance
 
-- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; v0.5.26 shows and filters the reception mode (satellite, cable, antenna); v0.6.0 runs the transfer as a background job with progress dialog, cancellation and automatic re-import and changes numbers via `iepg` (renumbering and list renaming confirmed on the TV); v0.6.1 combines export and import into one dialog each and restores backups onto the current working copy; v0.6.2 adds the SSH port to the TV login.
+- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; v0.5.26 shows and filters the reception mode (satellite, cable, antenna); v0.6.0 runs the transfer as a background job with progress dialog, cancellation and automatic re-import and changes numbers via `iepg` (renumbering and list renaming confirmed on the TV); v0.6.1 combines export and import into one dialog each and restores backups onto the current working copy; v0.6.2 adds the SSH port to the TV login, which v0.6.3 also uses for the transfer.
 - For future app releases, keep `APP_VERSION` in `version.py`, both READMEs and the tests consistent. `?v=` and the version chip are set automatically from `version.py`. Do not create invalid nested `<script>`/`<style>` tags.
 
 ## License
