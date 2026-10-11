@@ -58,7 +58,7 @@ class TvPingTests(unittest.TestCase):
 
 class PingEndpointTests(AppServerTestCase):
     def test_online_status(self):
-        with patch.object(self.app, 'tv_ping', lambda host: True):
+        with patch.object(self.app, 'tv_ping', lambda host, port=22: True):
             status, body, _ = self.get('/api/tv-ping?host=192.168.1.148')
         self.assertEqual((status, json.loads(body)), (200, {'online': True}))
 

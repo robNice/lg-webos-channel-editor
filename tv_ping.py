@@ -20,6 +20,8 @@ class TvPing:
     def online(self, host, port=22):
         if not isinstance(host, str) or not HOST_PATTERN.fullmatch(host):
             raise LocalizedError('error.ssh.invalid_host')
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise LocalizedError('error.ssh.invalid_port')
         try:
             sock = self.connect((host, port), timeout=self.TIMEOUT)
         except OSError:

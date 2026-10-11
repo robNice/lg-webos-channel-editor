@@ -152,8 +152,8 @@ def host_keys():
     return TvHostKeys(DATA / 'known_hosts')
 
 
-def tv_ping(host):
-    return TvPing().online(host)
+def tv_ping(host, port=22):
+    return TvPing().online(host, port)
 
 
 def settings():
@@ -1046,7 +1046,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/api/tv-ping':
             # No global lock: a reachability check must work during a transfer.
             try:
-                return self.reply({'online': tv_ping(parse_qs(parsed.query).get('host', [''])[0])})
+                query = parse_qs(parsed.query)
+                port = query.get('port', ['22'])[0]
+                port = int(port) if port.isdigit() else -1
+                return self.reply({'online': tv_ping(query.get('host', [''])[0], port)})
             except LocalizedError as e:
                 return self.fail(e, 400)
         if parsed.path == '/api/settings':

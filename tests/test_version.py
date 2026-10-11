@@ -22,6 +22,8 @@ class VersionTests(unittest.TestCase):
             html = app.INDEX.render(lang).decode()
             self.assertEqual(set(re.findall(r'\?v=([0-9.]+)', html)), {version.APP_VERSION})
 
+    # CHANGELOG.md is gitignored (local only), so it is missing in CI checkouts.
+    @unittest.skipUnless((ROOT / 'CHANGELOG.md').is_file(), 'CHANGELOG.md is local only (gitignored)')
     def test_changelog_documents_current_version(self):
         changelog = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
         self.assertIn('## v' + version.APP_VERSION, changelog)

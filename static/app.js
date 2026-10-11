@@ -211,39 +211,46 @@ class SyncReport{
 // Device history stays on this browser only. Never persist passwords.
 const HOST_KEY='lg-favoriten-editor-tv-hosts';
 function knownHosts(){try{const v=JSON.parse(localStorage.getItem(HOST_KEY)||'[]');return Array.isArray(v)?v.filter(s=>typeof s==='string').slice(0,12):[]}catch{return []}}
-function rememberHost(host){if(!host)return;try{localStorage.setItem(HOST_KEY,JSON.stringify([host,...knownHosts().filter(h=>h!==host)].slice(0,12)))}catch{}}
+const PORT_KEY='lg-favoriten-editor-tv-ports';
+function knownPorts(){try{const v=JSON.parse(localStorage.getItem(PORT_KEY)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:{}}catch{return {}}}
+function knownPort(host){const port=knownPorts()[host];return Number.isInteger(port)&&port>=1&&port<=65535?port:22;}
+function rememberHost(host,port=22){if(!host)return;try{localStorage.setItem(HOST_KEY,JSON.stringify([host,...knownHosts().filter(h=>h!==host)].slice(0,12)));const ports=knownPorts();ports[host]=port;localStorage.setItem(PORT_KEY,JSON.stringify(ports))}catch{}}
 // TV login for this page view: host and password live only in this object
 // (memory) until the page is reloaded or the user logs out. The server checks
 // the connection (/api/tv-login) but stores nothing.
 class TvSession{
  // Reachability of the TV (SSH port only, never with the password).
  static PING_INTERVAL=30000;
- constructor(){this.host=null;this.password=null;this.state='disconnected';this.checked=null;this.timer=null;}
+ constructor(){this.host=null;this.password=null;this.port=22;this.state='disconnected';this.checked=null;this.timer=null;}
  get active(){return !!(this.host&&this.password);}
  // Credentials for a TV action; asks for a login first if there is none.
- async credentials(){if(!this.active&&!await this.login())return null;return {host:this.host,password:this.password};}
+ async credentials(){if(!this.active&&!await this.login())return null;return {host:this.host,password:this.password,port:this.port};}
  login(){return new Promise(resolve=>{
    const form=document.createElement('form');form.className='login-form';
-   form.innerHTML=`<p class="login-intro">${esc(t('login.intro'))}</p><label for="login-host">${esc(t('tv.dialog.host'))}</label><input class="search" id="login-host" list="login-hosts" required autocomplete="off"><datalist id="login-hosts"></datalist><label for="login-pass">${esc(t('tv.dialog.password'))}</label><input class="search" id="login-pass" type="password" required autocomplete="off"><p class="login-status" role="status" aria-live="polite"></p><button type="submit" hidden></button>`;
-   const host=form.querySelector('#login-host'),password=form.querySelector('#login-pass'),status=form.querySelector('.login-status');
-   host.value=knownHosts()[0]||'';
+   form.innerHTML=`<p class="login-intro">${esc(t('login.intro'))}</p><div class="login-address"><div><label for="login-host">${esc(t('tv.dialog.host'))}</label><input class="search" id="login-host" list="login-hosts" required autocomplete="off"><datalist id="login-hosts"></datalist></div><div><label for="login-port">${esc(t('tv.dialog.port'))}</label><input class="search" id="login-port" type="number" min="1" max="65535" step="1" value="22" required autocomplete="off"></div></div><label for="login-pass">${esc(t('tv.dialog.password'))}</label><input class="search" id="login-pass" type="password" required autocomplete="off"><p class="login-status" role="status" aria-live="polite"></p><button type="submit" hidden></button>`;
+   const host=form.querySelector('#login-host'),port=form.querySelector('#login-port'),password=form.querySelector('#login-pass'),status=form.querySelector('.login-status');
+   host.value=knownHosts()[0]||'';port.value=knownPort(host.value);
    form.querySelector('#login-hosts').replaceChildren(...knownHosts().map(h=>{const o=document.createElement('option');o.value=h;return o}));
    const dialog=new ModalDialog(t('login.title'),form,{dismissible:false});
    dialog.open().then(()=>resolve(this.active));
-   const busy=on=>{for(const el of [host,password,...dialog.actions.querySelectorAll('button')])el.disabled=on;};
+   const busy=on=>{for(const el of [host,port,password,...dialog.actions.querySelectorAll('button')])el.disabled=on;};
    // Unknown SSH host key (e.g. first login from the Docker container): show
    // the fingerprint; only an explicit second click trusts exactly that key.
    let trust=null;
    const connectLabel=label=>{dialog.actions.querySelector('.primary').textContent=label;};
-   host.addEventListener('input',()=>{if(trust){trust=null;connectLabel(t('login.connect'));status.textContent='';}});
+   // The stored host key depends on host and port: changing either drops a pending trust.
+   const untrust=()=>{if(trust){trust=null;connectLabel(t('login.connect'));status.textContent='';}};
+   host.addEventListener('input',untrust);port.addEventListener('input',untrust);
+   host.addEventListener('change',()=>{if(knownHosts().includes(host.value.trim()))port.value=knownPort(host.value.trim());});
    form.onsubmit=async e=>{
      e.preventDefault();
-     const candidate={host:host.value.trim(),password:password.value,...(trust&&trust.host===host.value.trim()?{trust:trust.fingerprint}:{})};
+     const candidate={host:host.value.trim(),port:Number(port.value),password:password.value};
+     if(trust&&trust.host===candidate.host&&trust.port===candidate.port)candidate.trust=trust.fingerprint;
      status.className='login-status';status.textContent=t('login.checking',{host:candidate.host});busy(true);
      try{
        const r=await api('/api/tv-login',candidate);
-       if(r.unknownHostKey){trust={host:candidate.host,fingerprint:r.unknownHostKey.fingerprint};busy(false);status.className='login-status warn';status.textContent=t('login.host_key_unknown',{host:candidate.host,fingerprint:r.unknownHostKey.fingerprint,type:r.unknownHostKey.keyType});connectLabel(t('login.trust_connect'));return;}
-       this.host=candidate.host;this.password=candidate.password;rememberHost(this.host);this.watch();dialog.close();
+       if(r.unknownHostKey){trust={host:candidate.host,port:candidate.port,fingerprint:r.unknownHostKey.fingerprint};busy(false);status.className='login-status warn';status.textContent=t('login.host_key_unknown',{host:candidate.host,fingerprint:r.unknownHostKey.fingerprint,type:r.unknownHostKey.keyType});connectLabel(t('login.trust_connect'));return;}
+       this.host=candidate.host;this.port=candidate.port;this.password=candidate.password;rememberHost(this.host,this.port);this.watch();dialog.close();
      }
      catch(err){status.className='login-status error';status.textContent=err.message;busy(false);password.select();}
    };
@@ -258,14 +265,15 @@ class TvSession{
  }
  async ping(){
    const host=this.host;let online=false;
-   try{online=(await api('/api/tv-ping?host='+encodeURIComponent(host))).online;}catch{}
+   try{online=(await api('/api/tv-ping?host='+encodeURIComponent(host)+'&port='+this.port)).online;}catch{}
    if(host!==this.host)return;
    this.state=online?'online':'offline';this.checked=new Date();this.render();
  }
  render(){
    const time=this.checked?this.checked.toLocaleTimeString(document.documentElement.lang):'';
-   const title=!this.active?t('session.disconnected'):this.state==='online'?t('session.online',{host:this.host,time}):this.state==='offline'?t('session.offline',{host:this.host,time}):t('session.checking');
-   const label=this.active?t('session.connected',{host:this.host}):t('session.disconnected');
+   const address=this.port===22?this.host:`${this.host}:${this.port}`;
+   const title=!this.active?t('session.disconnected'):this.state==='online'?t('session.online',{host:address,time}):this.state==='offline'?t('session.offline',{host:address,time}):t('session.checking');
+   const label=this.active?t('session.connected',{host:address}):t('session.disconnected');
    $('#tvsession').innerHTML=`<span class="session-chip" data-state="${this.state}" title="${esc(title)}" role="status"><svg class="icon" aria-hidden="true"><use href="#i-tv"/></svg><span>${esc(label)}</span><span class="status-dot" aria-hidden="true"></span></span>`;
    const button=(id,icon,label)=>`<button class="btn icon-btn" type="button" id="${id}" title="${esc(label)}" aria-label="${esc(label)}"><svg class="icon" aria-hidden="true"><use href="#${icon}"/></svg></button>`;
    const area=$('#tvsessionbtn');
