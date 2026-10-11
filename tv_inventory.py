@@ -5,8 +5,10 @@ transponder that broadcasts new services (automatic channel update). These
 channels are unknown to the working copy, so tv_write.make_plan would refuse
 the whole transfer. Channels that exist ONLY on the TV are copied unchanged
 into the working copy (they then produce no write operation); local edits stay.
-Anything else - channels removed on the TV, renamed or ambiguous ones - is
-rejected with the affected channel names, as before without guessing.
+Channels the TV deleted are dropped from the working copy if they are in no
+local favorite list (v0.6.0, e.g. a leftover copy deleted on the TV).
+Anything else - deleted channels still in a local list, renamed or ambiguous
+ones - is rejected with the affected channel names, without guessing.
 """
 import sqlite3
 from pathlib import Path
@@ -23,6 +25,18 @@ class TvInventorySync:
         self.working_path = Path(working_path)
         self.tv_path = Path(tv_path)
         self.backup_path = Path(backup_path)
+        self.removed = []
+
+    @staticmethod
+    def _in_a_list(conn, ids):
+        """IDs (of ``ids``) that belong to at least one local favorite list."""
+        columns = {r[1] for r in conn.execute('PRAGMA table_info(tuner_on)')}
+        flags = [f'fav_chan_gr_{g.lower()}' for g in tv_write.GROUPS if f'fav_chan_gr_{g.lower()}' in columns]
+        member = set()
+        for row in conn.execute(f'SELECT dvc_chan_id, {", ".join(flags)} FROM tuner_on'):
+            if str(row[0]) in ids and any(str(v or '').strip().lower() in ('1', 'true') for v in row[1:]):
+                member.add(str(row[0]))
+        return member
 
     @staticmethod
     def _channels(conn):
@@ -40,23 +54,36 @@ class TvInventorySync:
         return {t: [r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')] for t in tables}
 
     def adopt(self):
-        """Copy TV-only channels into the working copy; returns their names."""
+        """Copy TV-only channels into the working copy and drop channels the TV
+        deleted (only if in no local list). Returns the added names; the
+        removed names are in ``self.removed``."""
         with sqlite3.connect(self.working_path) as work, sqlite3.connect(self.tv_path) as tv:
             local, remote = self._channels(work), self._channels(tv)
             removed = set(local) - set(remote)
-            if removed:
+            listed = self._in_a_list(work, removed)
+            if listed:
                 raise LocalizedError('error.plan.inventory_removed_on_tv',
-                                     channels=self._names(local[i] or i for i in removed))
+                                     channels=self._names(local[i] or i for i in listed))
             new = sorted(set(remote) - set(local))
-            if new:
+            if new or removed:
                 self._backup()
+            if new:
                 self._copy_rows(work, tv, new)
+            if removed:
+                self._delete_rows(work, sorted(removed))
             differing = self._differing_keys(work, tv)
             if differing:
                 work.rollback()
                 raise LocalizedError('error.plan.inventory_ambiguous', channels=self._names(differing))
             work.commit()
+            self.removed = sorted((local[i] for i in removed), key=str.casefold)
             return [remote[i] for i in new]
+
+    def _delete_rows(self, work, ids):
+        marks = ','.join('?' * len(ids))
+        for table, columns in self._tables(work).items():
+            if 'dvc_chan_id' in columns:
+                work.execute(f'DELETE FROM "{table}" WHERE dvc_chan_id IN ({marks})', ids)
 
     def _backup(self):
         with sqlite3.connect(self.working_path) as source, sqlite3.connect(self.backup_path) as target:
@@ -93,6 +120,10 @@ class TvGroupReload:
         self.tv_path = Path(tv_path)
         self.backup_path = Path(backup_path)
 
+    def backup(self):
+        with sqlite3.connect(self.working_path) as source, sqlite3.connect(self.backup_path) as target:
+            source.backup(target)
+
     @staticmethod
     def _members(conn, group):
         flag, index = f'fav_chan_gr_{group.lower()}', f'favoriteIdx{group}'
@@ -115,10 +146,12 @@ class TvGroupReload:
         return {'local': [name for _, name in local], 'tv': [name for _, name in remote],
                 'localName': local_name, 'tvName': tv_name}
 
-    def apply(self, group):
+    def apply(self, group, backup=True):
+        """backup=False when several lists are replaced in a row: the caller
+        backs up once before the first one."""
         flag, index = f'fav_chan_gr_{group.lower()}', f'favoriteIdx{group}'
-        with sqlite3.connect(self.working_path) as source, sqlite3.connect(self.backup_path) as target:
-            source.backup(target)
+        if backup:
+            self.backup()
         with sqlite3.connect(self.working_path) as work, sqlite3.connect(self.tv_path) as tv:
             work_tables, tv_tables = TvInventorySync._tables(work), TvInventorySync._tables(tv)
             for table in self.TABLES:

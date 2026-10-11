@@ -21,6 +21,11 @@ from tv_job import TvWriteJob, TvWriteJobs
 from tv_inventory import TvGroupReload, TvInventorySync
 from tv_login import TvLoginCheck
 from tv_groups import GroupNameSync, TV_CHANNEL_DB
+from backup_restore import BackupSnapshot, ImportFormat, PendingUploads, RestorePlanner
+from backup_export import EditorExport, ExportOptions, RawTables
+from backup_retention import BackupRetention, Settings
+from tv_ping import TvPing
+from tv_hostkeys import TvHostKeys
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -109,10 +114,7 @@ def import_from_tv(host, password, port=22, ssh_client_factory=None):
             import paramiko
         except ImportError as exc:
             raise LocalizedError('error.ssh.paramiko_missing') from exc
-        ssh_client_factory = paramiko.SSHClient
-        client = ssh_client_factory()
-        client.load_system_host_keys()
-        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        client = host_keys().client()
     else:
         client = ssh_client_factory()
 
@@ -146,10 +148,36 @@ def import_from_tv(host, password, port=22, ssh_client_factory=None):
 
 
 
-def tv_sync_preflight(host, password, port=22, ssh_client_factory=None):
+def host_keys():
+    return TvHostKeys(DATA / 'known_hosts')
+
+
+def tv_ping(host):
+    return TvPing().online(host)
+
+
+def settings():
+    return Settings(DATA / 'settings.json')
+
+
+def backup_retention():
+    return BackupRetention(DATA / 'tv-backups')
+
+
+def tv_sync_report(host, password, port=22, ssh_client_factory=None):
+    """Read-only comparison TV <-> working copy ("Sync report"); the TV copy
+    is temporary and deleted afterwards, no backup is kept."""
+    result = tv_sync_preflight(host, password, port, ssh_client_factory, keep=False)
+    result.pop('backedUp', None)
+    return result
+
+
+def tv_sync_preflight(host, password, port=22, ssh_client_factory=None, keep=True):
     """Compare TV snapshot with working copy; NEVER replace running TV database.
 
-    A unique, consistent backup is retained locally even if comparison fails.
+    keep=True: a unique, consistent backup is retained locally even if the
+    comparison fails, and the backups are limited to the configured number.
+    keep=False: the snapshot is temporary (sync report).
     """
     import datetime
     import hashlib
@@ -164,16 +192,15 @@ def tv_sync_preflight(host, password, port=22, ssh_client_factory=None):
             import paramiko
         except ImportError as exc:
             raise LocalizedError('error.ssh.paramiko_missing') from exc
-        client = paramiko.SSHClient()
-        client.load_system_host_keys()
-        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        client = host_keys().client()
     else:
         client = ssh_client_factory()
     token = uuid.uuid4().hex
     remote = f'/tmp/lg-favorites-preflight-{token}.sqlite'
-    backups = DATA / 'tv-backups'
+    backups = DATA / 'tv-backups' if keep else DATA
     backups.mkdir(parents=True, exist_ok=True)
-    local = backups / ('tv-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + token[:8] + '.sqlite')
+    local = backups / (('tv-' if keep else 'tv-report-') + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+                       + '-' + token[:8] + '.sqlite')
     with LOCK:
         with connection() as working:
             if working.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
@@ -189,6 +216,8 @@ def tv_sync_preflight(host, password, port=22, ssh_client_factory=None):
                 if sftp.stat(remote).st_size > MAX_UPLOAD:
                     raise LocalizedError('error.tv.db_too_large')
                 sftp.get(remote, str(local))
+            if keep:
+                backup_retention().prune(settings().load()['tvBackupsKeep'])
             with sqlite3.connect(f'file:{local.resolve().as_posix()}?mode=ro', uri=True) as tv, connection() as work:
                 validate_database(tv)
                 if tv.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
@@ -208,36 +237,56 @@ def tv_sync_preflight(host, password, port=22, ssh_client_factory=None):
             except Exception:
                 pass
             client.close()
+            if not keep:
+                local.unlink(missing_ok=True)
 
 SYNC_PLANS = {}
 
 
-def connect_tv(host, password, port=22):
+def connect_tv(host, password, port=22, trust=None):
+    """``trust``: fingerprint the user confirmed for a TV whose host key is
+    not known yet (stored in data/known_hosts on success)."""
     if not isinstance(host,str) or not re.fullmatch(r'[a-zA-Z0-9.:-]{1,253}',host):
         raise LocalizedError('error.ssh.invalid_host')
     if not isinstance(password,str) or not password: raise LocalizedError('error.ssh.password_missing')
     if type(port) is not int or not 1<=port<=65535: raise LocalizedError('error.ssh.invalid_port')
     try: import paramiko
     except ImportError as exc: raise LocalizedError('error.ssh.paramiko_missing') from exc
-    client=paramiko.SSHClient()
-    client.load_system_host_keys()
-    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    client=host_keys().client(trust)
     client.connect(hostname=host,port=port,username='root',password=password,
                    look_for_keys=False,allow_agent=False,timeout=12,auth_timeout=12)
     return client
 
 
 def tv_snapshot_with_new_channels(host,password,port=22):
-    """Fresh TV backup; channels the TV added by itself are taken over."""
+    """Fresh TV backup; channels the TV added are taken over, channels it
+    deleted are dropped if they are in no local list."""
     check=tv_sync_preflight(host,password,port)
-    adopted=TvInventorySync(DB,Path(check['backedUp']),DATA/'before-tv-adopt.sqlite').adopt()
-    return Path(check['backedUp']),adopted
+    sync=TvInventorySync(DB,Path(check['backedUp']),DATA/'before-tv-adopt.sqlite')
+    added=sync.adopt()
+    return Path(check['backedUp']),{'adoptedChannels':added,'removedChannels':sync.removed}
 
 
 def reload_tv_channels(host,password,port=22):
     with LOCK:
-        _,adopted=tv_snapshot_with_new_channels(host,password,port)
-        return {'ok':True,'adoptedChannels':adopted}
+        _,inventory=tv_snapshot_with_new_channels(host,password,port)
+        return {'ok':True,**inventory}
+
+
+def reload_tv_groups(host,password,confirm=False,port=22):
+    """Replace ALL favorite lists A-H (members, order, names) by the TV
+    version; differing lists only after explicit confirmation. One backup of
+    the state before the first replaced list."""
+    with LOCK:
+        snapshot,inventory=tv_snapshot_with_new_channels(host,password,port)
+        reload=TvGroupReload(DB,snapshot,DATA/'before-group-reload.sqlite')
+        differences=[{'group':g,**d} for g in GROUPS for d in [reload.difference(g)] if d]
+        if differences and not confirm:
+            return {'needsConfirm':True,'differences':differences,**inventory}
+        if differences:
+            reload.backup()
+            for d in differences: reload.apply(d['group'],backup=False)
+        return {'ok':True,'changed':[d['group'] for d in differences],**inventory}
 
 
 def reload_tv_group(host,password,group,confirm=False,port=22):
@@ -245,14 +294,14 @@ def reload_tv_group(host,password,group,confirm=False,port=22):
     is only replaced after explicit confirmation."""
     if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
     with LOCK:
-        snapshot,adopted=tv_snapshot_with_new_channels(host,password,port)
+        snapshot,inventory=tv_snapshot_with_new_channels(host,password,port)
         reload=TvGroupReload(DB,snapshot,DATA/'before-group-reload.sqlite')
         difference=reload.difference(group)
         if difference and not confirm:
-            return {'needsConfirm':True,'group':group,'adoptedChannels':adopted,**difference}
+            return {'needsConfirm':True,'group':group,**inventory,**difference}
         if difference:
             reload.apply(group)
-        return {'ok':True,'changed':bool(difference),'adoptedChannels':adopted}
+        return {'ok':True,'changed':bool(difference),**inventory}
 
 
 def preview_operation(o,baseline):
@@ -270,7 +319,7 @@ def prepare_tv_write(host,password,port=22):
     with LOCK:
         # Channels the TV added by itself since the import (automatic channel
         # update while zapping) are taken over before planning.
-        snapshot,adopted=tv_snapshot_with_new_channels(host,password,port)
+        snapshot,inventory=tv_snapshot_with_new_channels(host,password,port)
         renames=GroupNameSync.plan(DB,snapshot)
         client=connect_tv(host,password,port)
         try:
@@ -285,7 +334,7 @@ def prepare_tv_write(host,password,port=22):
         preview=[preview_operation(o,baseline) for o in renames+operations]
         return {'token':token,'backup':str(snapshot),'operations':preview,
                 'total':len(renames)+len(operations), 'warning':Message('sync.write_warning'),
-                'adoptedChannels':adopted}
+                **inventory}
 
 
 def commit_tv_write(host,password,port,token,progress=None):
@@ -329,10 +378,15 @@ def start_tv_write(host,password,port,token):
         lambda: import_from_tv(host,password,port)))
 
 
-def read_groups(conn):
+def group_names(conn):
+    """{group: stored list name}; groups without a row are missing."""
     rows = conn.execute('SELECT channel_group_id, user_edited_name, channel_group_name FROM channel_group_tuner WHERE is_favorite_group=1').fetchall()
-    names = {int(r['channel_group_id']) - 200: r['user_edited_name'] or r['channel_group_name'] for r in rows}
-    return [{'id': g, 'name': names.get(i, Message('group.default_name', group=g))} for i, g in enumerate(GROUPS)]
+    return {GROUPS[int(r[0]) - 200]: r[1] or r[2] for r in rows if 0 <= int(r[0]) - 200 < len(GROUPS)}
+
+
+def read_groups(conn):
+    names = group_names(conn)
+    return [{'id': g, 'name': names.get(g) or Message('group.default_name', group=g)} for g in GROUPS]
 
 
 def classify_kind(row, cols):
@@ -428,10 +482,15 @@ def set_membership(conn, group, channel_id, enabled):
     else:
         ids.remove(channel_id)
         # Remove membership first so reordering validates against the new set.
-        for table in ('tuner_on', 'tuner_off', 'favorite_idx'):
-            conn.execute(f'UPDATE {table} SET {flag}=?, {idx}=? WHERE dvc_chan_id=?',
-                         ('0', 250, channel_id))
+        clear_membership(conn, group, [channel_id])
         save_group_order(conn, group, ids)
+
+
+def clear_membership(conn, group, ids):
+    flag, idx = f'fav_chan_gr_{group.lower()}', f'favoriteIdx{group}'
+    for table in ('tuner_on', 'tuner_off', 'favorite_idx'):
+        conn.executemany(f'UPDATE {table} SET {flag}=?, {idx}=? WHERE dvc_chan_id=?',
+                         [('0', 250, cid) for cid in ids])
 
 
 def ensure_favorite_row(conn, channel_id):
@@ -450,6 +509,20 @@ def save_group_order(conn, group, ids, new_id=None):
     existing = {c['id'] for c in channels.values() if c['favorites'][group]}
     expected = existing | ({new_id} if new_id else set())
     if set(ids) != expected: raise LocalizedError('error.edit.incomplete_list')
+    write_group_order(conn, group, ids)
+
+
+def replace_group_members(conn, group, ids):
+    """Set membership AND order of a list to exactly ``ids`` (backup restore)."""
+    if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
+    channels = channel_rows(conn)
+    if len(ids) != len(set(ids)): raise LocalizedError('error.edit.duplicate_ids')
+    if not set(ids).issubset(c['id'] for c in channels): raise LocalizedError('error.edit.unknown_id')
+    clear_membership(conn, group, [c['id'] for c in channels if c['favorites'][group] and c['id'] not in ids])
+    write_group_order(conn, group, ids)
+
+
+def write_group_order(conn, group, ids):
     flag, idx = f'fav_chan_gr_{group.lower()}', f'favoriteIdx{group}'
     if len(ids) > 250: raise LocalizedError('error.edit.too_many_favorites')
     for pos, cid in enumerate(ids):
@@ -727,10 +800,136 @@ def rename_group(conn, group, name):
     # Deliberately no /var/luna/preferences/channel edits: TV is never written to.
 
 
-def export_json(conn):
-    channels = channel_rows(conn)
-    return {'format': 'lg-favoriten-editor-v1', 'groups': read_groups(conn),
-            'channels': channels, 'note': Message('export.note')}
+UPLOADS = PendingUploads()
+
+
+def is_default_group_name(group, name):
+    return any(I18N.translate(lang, 'group.default_name', group=group) == name for lang in I18N.languages())
+
+
+def backup_snapshot(kind, raw):
+    """Desired state from an uploaded backup (any export format)."""
+    if kind == 'csv': return BackupSnapshot.from_csv(raw)
+    if kind == 'zip': return BackupSnapshot.from_zip(raw)
+    if kind == 'json': return BackupSnapshot.from_json(raw)
+    DATA.mkdir(exist_ok=True)
+    path = DATA / f'upload-{uuid.uuid4().hex}.sqlite'
+    path.write_bytes(raw)
+    try:
+        conn = sqlite3.connect(f'file:{path.resolve().as_posix()}?mode=ro', uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            validate_database(conn)
+            return BackupSnapshot.from_channels(channel_rows(conn), group_names(conn))
+        finally:
+            conn.close()
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def restore_planner(conn, snapshot):
+    return RestorePlanner(snapshot, channel_rows(conn), group_names(conn), is_default_group_name)
+
+
+def import_selection(data):
+    lists, names = data.get('lists', []), data.get('names', [])
+    if not isinstance(lists, list) or not isinstance(names, list) or type(data.get('numbers', False)) is not bool:
+        raise LocalizedError('error.import.selection_invalid')
+    if not set(lists) <= set(GROUPS) or not set(names) <= set(GROUPS):
+        raise LocalizedError('error.edit.invalid_group')
+    return {'lists': lists, 'names': names, 'numbers': data.get('numbers', False)}
+
+
+def analyse_upload(raw):
+    """Step 1 of a file import: detect the format, check the file and report
+    what it could restore. Nothing is changed yet."""
+    kind = ImportFormat.detect(raw)
+    snapshot = backup_snapshot(kind, raw)
+    with LOCK:
+        loaded = DB.exists()
+        replaceable = kind == 'sqlite' or snapshot.raw is not None
+        if not loaded and not replaceable:
+            raise LocalizedError('error.import.needs_working_copy')
+        result = {'token': UPLOADS.store(kind, raw), 'format': kind, 'canReplace': replaceable, 'canApply': loaded}
+        if not loaded:
+            return result
+        with connection() as conn:
+            return {**result, **restore_planner(conn, snapshot).analysis()}
+
+
+def import_plan(token, data):
+    kind, raw = UPLOADS.get(token)
+    with LOCK, connection() as conn:
+        return restore_planner(conn, backup_snapshot(kind, raw)).plan(**import_selection(data))
+
+
+def apply_import(token, data):
+    """Step 2: replace the working copy (SQLite only) or apply the selection."""
+    kind, raw = UPLOADS.get(token)
+    if data.get('mode') == 'replace':
+        DATA.mkdir(exist_ok=True)
+        incoming = DATA / f'upload-{uuid.uuid4().hex}.tmp'
+        if kind == 'sqlite':
+            incoming.write_bytes(raw)
+        else:
+            snapshot = backup_snapshot(kind, raw)
+            if snapshot.raw is None: raise LocalizedError('error.import.replace_needs_complete')
+            try:
+                with sqlite3.connect(str(incoming)) as rebuilt: RawTables.restore(snapshot.raw, rebuilt)
+            except Exception:
+                incoming.unlink(missing_ok=True)
+                raise
+        try:
+            with LOCK: import_db(incoming)
+        finally: incoming.unlink(missing_ok=True)
+        UPLOADS.drop(token)
+        return {'mode': 'replace'}
+    snapshot = backup_snapshot(kind, raw)
+    with LOCK, connection() as conn:
+        plan = restore_planner(conn, snapshot).plan(**import_selection(data))
+        if data.get('confirmedChanges') != plan['numbers']['changes']:
+            raise LocalizedError('error.import.preview_outdated')
+        with sqlite3.connect(str(DATA / 'before-file-import.sqlite')) as backup:
+            conn.backup(backup)
+        with conn:
+            apply_restore_plan(conn, plan)
+    UPLOADS.drop(token)
+    return {'mode': 'apply', 'lists': {g: len(ids) for g, ids in plan['lists'].items()},
+            'names': sorted(plan['names']), 'numbers': len(plan['numbers']['changes'])}
+
+
+def apply_restore_plan(conn, plan):
+    for group, ids in plan['lists'].items():
+        replace_group_members(conn, group, ids)
+    for group, name in plan['names'].items():
+        rename_group(conn, group, name)
+    by_mode = {}
+    for change in plan['numbers']['changes']:
+        by_mode.setdefault(change['mode'], []).append(change)
+    for mode, changes in by_mode.items():
+        apply_renumber(conn, {'mode': mode, 'changes': changes})
+
+
+def export_sqlite(conn):
+    # Back up to a temp file for a consistent snapshot.
+    tmp = DATA / f'export-{uuid.uuid4().hex}.sqlite'
+    try:
+        with sqlite3.connect(str(tmp)) as target: conn.backup(target)
+        return tmp.read_bytes()
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def export_file(conn, options, lang):
+    """(bytes, content type, file name) of an export as chosen in the dialog."""
+    filename = lambda key: I18N.translate(lang, key)
+    if options.kind == 'sqlite':
+        return export_sqlite(conn), 'application/vnd.sqlite3', filename('export.filename.sqlite')
+    export = EditorExport(options, channel_rows(conn), group_names(conn), RawTables(conn), channel_sort)
+    if options.kind == 'json':
+        return export.json(lang), 'application/json', filename('export.filename.json')
+    raw, content_type, key = export.csv(lang)
+    return raw, content_type, filename(key)
 
 
 class IndexPage:
@@ -844,12 +1043,21 @@ class Handler(BaseHTTPRequestHandler):
             if job is None:
                 return self.fail(LocalizedError('error.sync.job_unknown'), 404) if job_id else self.reply({'state': 'none'})
             return self.reply(job.status())
+        if parsed.path == '/api/tv-ping':
+            # No global lock: a reachability check must work during a transfer.
+            try:
+                return self.reply({'online': tv_ping(parse_qs(parsed.query).get('host', [''])[0])})
+            except LocalizedError as e:
+                return self.fail(e, 400)
+        if parsed.path == '/api/settings':
+            return self.reply({'settings': settings().load(), 'backups': backup_retention().stats(),
+                               'range': list(Settings.KEEP_RANGE)})
         if parsed.path == '/api/status':
             with LOCK:
                 if not DB.exists(): return self.reply({'loaded': False})
                 try:
                     with connection() as conn: result = get_overview(conn)
-                    return self.reply({'loaded': True, **result})
+                    return self.reply({'loaded': True, 'modified': DB.stat().st_mtime, **result})
                 except Exception as e: return self.reply({'loaded': False, 'error': I18N.render(e, self.lang)}, 500)
         if parsed.path == '/api/renumber/preview':
             qs = parse_qs(parsed.query)
@@ -871,32 +1079,15 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e: return self.fail(e, 400)
         if parsed.path.startswith('/download/'):
             kind = parsed.path.split('/')[-1]
+            try:
+                options = ExportOptions.parse(kind, {k: v[0] for k, v in parse_qs(parsed.query, keep_blank_values=True).items()})
+            except LocalizedError as e:
+                return self.fail(e, 404 if kind not in ('sqlite', 'csv', 'json') else 400)
             with LOCK:
                 try:
                     with connection() as conn:
-                        if kind == 'json':
-                            raw = json.dumps(I18N.localize(export_json(conn), self.lang), ensure_ascii=False, indent=2).encode()
-                            return self.send_bytes(raw, 'application/json', self.t('export.filename.json'))
-                        if kind == 'csv':
-                            out = io.StringIO(); writer = csv.writer(out)
-                            writer.writerow([self.t('export.csv.' + column) for column in ('group', 'position', 'number', 'name', 'satellite', 'channel_id')])
-                            data = channel_rows(conn)
-                            for g in GROUPS:
-                                for i, c in enumerate(channel_sort([x for x in data if x['favorites'][g]], g), 1):
-                                    writer.writerow([g, i, c['number'], c['name'], c['satellite'], c['id']])
-                            return self.send_bytes(out.getvalue().encode('utf-8-sig'), 'text/csv; charset=utf-8', self.t('export.filename.csv'))
-                        if kind == 'sqlite':
-                            out = io.BytesIO()
-                            # Back up to a temp file for a consistent snapshot.
-                            tmp = DATA / 'export.sqlite'
-                            try:
-                                with sqlite3.connect(str(tmp)) as target: conn.backup(target)
-                                raw = tmp.read_bytes()
-                            finally:
-                                tmp.unlink(missing_ok=True)
-                            return self.send_bytes(raw, 'application/vnd.sqlite3', self.t('export.filename.sqlite'))
+                        return self.send_bytes(*export_file(conn, options, self.lang))
                 except Exception as e: return self.fail(e, 400)
-            return self.fail(LocalizedError('error.http.unknown_export'), 404)
         return self.fail(LocalizedError('error.http.not_found'), 404)
 
     def do_POST(self):
@@ -920,14 +1111,12 @@ class Handler(BaseHTTPRequestHandler):
                 raw = parts[0].get_payload(decode=True)
                 if raw is None: raise LocalizedError('error.upload.unreadable')
                 if len(raw) > MAX_UPLOAD: raise LocalizedError('error.upload.too_large')
-                DATA.mkdir(exist_ok=True)
-                incoming = DATA / 'upload.tmp'
-                incoming.write_bytes(raw)
-                try:
-                    with LOCK: import_db(incoming)
-                finally: incoming.unlink(missing_ok=True)
-                return self.reply({'ok': True})
+                return self.reply(analyse_upload(raw))
             data = json.loads(self.rfile.read(length))
+            if self.path == '/api/import-plan':
+                return self.reply(import_plan(str(data.get('token')), data))
+            if self.path == '/api/import-apply':
+                return self.reply(apply_import(str(data.get('token')), data))
             if self.path == '/api/tv-write-preview':
                 return self.reply(prepare_tv_write(data.get('host'),data.get('password'),data.get('port',22)))
             if self.path == '/api/tv-write-cancel':
@@ -939,15 +1128,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({'job': job.id}, 202)
             if self.path == '/api/tv-login':
                 # Late lookup of connect_tv keeps it replaceable in tests.
-                login = TvLoginCheck(lambda host, password, port: connect_tv(host, password, port))
-                return self.reply(login.check(data.get('host'), data.get('password'), data.get('port', 22)))
+                login = TvLoginCheck(lambda host, password, port, trust: connect_tv(host, password, port, trust))
+                trust = data.get('trust') if isinstance(data.get('trust'), str) else None
+                return self.reply(login.check(data.get('host'), data.get('password'), data.get('port', 22), trust))
             if self.path == '/api/tv-reload-channels':
                 return self.reply(reload_tv_channels(data.get('host'), data.get('password'), data.get('port', 22)))
+            if self.path == '/api/tv-reload-groups':
+                return self.reply(reload_tv_groups(data.get('host'), data.get('password'),
+                                                   data.get('confirm') is True, data.get('port', 22)))
             if self.path == '/api/tv-reload-group':
                 return self.reply(reload_tv_group(data.get('host'), data.get('password'), str(data.get('group')),
                                                   data.get('confirm') is True, data.get('port', 22)))
-            if self.path == '/api/tv-sync-preflight':
-                return self.reply(tv_sync_preflight(data.get('host'), data.get('password'), data.get('port', 22)))
+            if self.path == '/api/tv-sync-report':
+                return self.reply(tv_sync_report(data.get('host'), data.get('password'), data.get('port', 22)))
+            if self.path == '/api/settings':
+                with LOCK:
+                    values = settings().save({'tvBackupsKeep': data.get('tvBackupsKeep')})
+                    deleted = backup_retention().prune(values['tvBackupsKeep'])
+                    return self.reply({'settings': values, 'deleted': len(deleted), 'backups': backup_retention().stats()})
             if self.path == '/api/import-tv':
                 import_from_tv(data.get('host'), data.get('password'), data.get('port', 22))
                 return self.reply({'ok': True})
@@ -990,16 +1188,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.fail(e, 500)
 
 
-def main():
+def parse_args(argv=None):
     lang = I18N.negotiate_posix(os.environ.get('LC_ALL') or os.environ.get('LC_MESSAGES') or os.environ.get('LANG'))
     parser = argparse.ArgumentParser(description=I18N.translate(lang, 'console.description'))
-    parser.add_argument('--port', type=int, default=8765)
+    # The Docker image sets LG_EDITOR_HOST=0.0.0.0; locally only 127.0.0.1 by default.
+    parser.add_argument('--host', default=os.environ.get('LG_EDITOR_HOST', '127.0.0.1'))
+    parser.add_argument('--port', type=int, default=int(os.environ.get('LG_EDITOR_PORT', '8765')))
     parser.add_argument('--db', help=I18N.translate(lang, 'console.db_help'))
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    args.lang = lang
+    return args
+
+
+def main():
+    args = parse_args()
+    lang = args.lang
     DATA.mkdir(exist_ok=True)
     if args.db: import_db(Path(args.db))
-    print(I18N.translate(lang, 'console.open', url=f'http://127.0.0.1:{args.port}'))
-    print(I18N.translate(lang, 'console.local_only'))
-    ThreadingHTTPServer(('127.0.0.1', args.port), Handler).serve_forever()
+    local = args.host in ('127.0.0.1', 'localhost', '::1')
+    print(I18N.translate(lang, 'console.open', url=f'http://{args.host if local else "<host>"}:{args.port}'))
+    print(I18N.translate(lang, 'console.local_only' if local else 'console.network'))
+    ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
 
 if __name__ == '__main__': main()

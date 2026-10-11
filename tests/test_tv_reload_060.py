@@ -111,6 +111,11 @@ class ReloadHttpTests(AppServerTestCase):
             status, body = self.post('/api/tv-reload-channels', {'host': 'tv', 'password': 'pw'})
         self.assertEqual((status, body['adoptedChannels']), (200, ['More Than Sports TV']))
 
+    def test_reload_channels_drops_channels_deleted_on_tv(self):
+        with self.tv_snapshot(CHANNELS[:-1]):
+            status, body = self.post('/api/tv-reload-channels', {'host': 'tv', 'password': 'pw'})
+        self.assertEqual((status, body['removedChannels']), (200, ['Sender 12']))
+
     def test_group_reload_asks_before_replacing_a_different_list(self):
         tv = [dict(c, favorites={'A': 0} if c['name'] == 'Sender 9' else {}) for c in CHANNELS]
         with self.tv_snapshot(tv):

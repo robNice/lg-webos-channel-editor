@@ -15,12 +15,13 @@ def button(element_id):
 
 class ToolbarIconTests(unittest.TestCase):
     def test_symbols_defined_once(self):
-        for name in ('download', 'upload', 'sync', 'reload'):
+        for name in ('download', 'upload', 'sync', 'reload', 'import'):
             self.assertEqual(TEMPLATE.count(f'<symbol id="i-{name}"'), 1, name)
 
-    def test_downloads_have_download_icon(self):
-        for element_id in ('dbexport', 'csvexport', 'jsonexport'):
-            self.assertIn('<use href="#i-download"', button(element_id))
+    def test_export_and_import_icons(self):
+        # v0.6.1: one export button (format chosen in a dialog) and one import button.
+        self.assertIn('<use href="#i-download"', button('exportbtn'))
+        self.assertIn('<use href="#i-import"', button('importbtn'))
 
     def test_transfer_and_check_icons(self):
         self.assertIn('<use href="#i-upload"', button('tvwrite'))

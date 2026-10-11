@@ -34,7 +34,7 @@ class TvLoginCheckTests(unittest.TestCase):
     def check(self, client=None, error=None):
         calls = []
 
-        def connect(host, password, port=22):
+        def connect(host, password, port=22, trust=None):
             calls.append((host, password, port))
             if error:
                 raise error
@@ -82,12 +82,12 @@ class TvLoginHttpTests(AppServerTestCase):
 
     def test_login_endpoint_uses_connect_tv(self):
         client = FakeClient()
-        with patch.object(app, 'connect_tv', lambda host, password, port=22: client):
+        with patch.object(app, 'connect_tv', lambda host, password, port=22, trust=None: client):
             status, body = self.post('/api/tv-login', {'host': 'tv', 'password': 'pw'})
         self.assertEqual((status, body), (200, {'ok': True, 'host': 'tv'}))
 
     def test_login_failure_is_400_with_message(self):
-        def refuse(host, password, port=22):
+        def refuse(host, password, port=22, trust=None):
             raise OSError('Authentication failed.')
         with patch.object(app, 'connect_tv', refuse):
             status, body = self.post('/api/tv-login', {'host': 'tv', 'password': 'bad'})

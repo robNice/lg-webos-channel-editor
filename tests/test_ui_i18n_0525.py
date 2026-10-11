@@ -116,10 +116,11 @@ class HttpLanguageTests(AppServerTestCase):
 
     def test_csv_export_header_and_filename(self):
         _, body, headers = self.get('/download/csv', 'en')
-        self.assertTrue(body.startswith('Group,Position,Channel number'))
+        # v0.6.1: one row per channel, one column per favorite list.
+        self.assertTrue(body.startswith('Channel number,Channel name,Satellite'))
         self.assertIn('lg-favorites.csv', headers['Content-Disposition'])
         _, body, headers = self.get('/download/csv', 'de')
-        self.assertTrue(body.startswith('Gruppe,Position,Sendernummer'))
+        self.assertTrue(body.startswith('Sendernummer,Sendername,Satellit'))
 
 
 if __name__ == '__main__':

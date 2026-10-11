@@ -1,0 +1,19 @@
+# LG WebOS Channel Editor – example for Docker Compose (e.g. OpenMediaVault
+# "Compose" plugin). Copy, adjust the two marked lines, then: docker compose up -d
+#
+# The editor has no login of its own: only run it in a trusted home network.
+
+services:
+  lg-channel-editor:
+    image: ghcr.io/robnice/lg-webos-channel-editor:latest   # or :dev for test builds, or a fixed version like :0.6.1
+    container_name: lg-channel-editor
+    restart: unless-stopped
+    ports:
+      - "8765:8765"   # host port : container port – change the LEFT number if 8765 is taken ### CHANGE IF NEEDED ###
+    volumes:
+      # Working copy, backups (tv-backups/), settings.json and confirmed TV
+      # host keys (known_hosts). Keep this directory when updating the image.
+      - /path/to/lg-channel-editor/data:/app/data   ### CHANGE THIS ###
+    environment:
+      TZ: Europe/Berlin          # timestamps of backups
+      LANG: de_DE.UTF-8          # language of the console output (the web UI follows the browser)

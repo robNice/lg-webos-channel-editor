@@ -1,0 +1,14 @@
+.git
+.github
+.idea
+data
+tests
+docs
+_project_files
+__pycache__
+*.pyc
+AGENTS.md
+CLAUDE.md
+CHANGELOG.md
+interne_notizen.md
+TECHNISCHE_GRUNDLAGEN.md

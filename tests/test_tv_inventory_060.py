@@ -92,13 +92,34 @@ class AdoptNewTvChannelsTests(InventoryTestCase):
 
 
 class RejectedDifferencesTests(InventoryTestCase):
-    def test_channel_removed_on_tv_is_reported_by_name(self):
+    def test_channel_removed_on_tv_in_no_list_is_removed_locally(self):
+        """Real case (HGTV HD 68 deleted on the TV): a channel in no local list
+        that no longer exists on the TV is dropped from the working copy."""
         tv = self.tv(BASE[:-1] + NEW)
+        sync = self.sync(tv)
+        self.assertEqual(sorted(sync.adopt()), ['', 'More Than Sports TV', 'ffn'])
+        self.assertEqual(sync.removed, ['Sender 12'])
+        with sqlite3.connect(self.work) as db:
+            for table in ('tuner_on', 'tuner_off'):
+                self.assertEqual(db.execute(f'SELECT count(*) FROM {table} WHERE dvc_chan_id=?', (BASE[-1]['id'],)).fetchone()[0], 0)
+            self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+        with sqlite3.connect(self.work) as w, sqlite3.connect(tv) as t:
+            self.assertEqual(set(tv_write.channel_map(w)), set(tv_write.channel_map(t)))
+        self.assertTrue(self.backup.exists())
+
+    def test_channel_removed_on_tv_but_in_a_local_list_aborts_by_name(self):
+        tv = self.tv(BASE[1:] + NEW)  # Sender 1 is in list A locally
         signature = tv_write.signature(self.work)
-        with assert_raises_message(self, 'error.plan.inventory_removed_on_tv', channels='Sender 12') as ctx:
+        with assert_raises_message(self, 'error.plan.inventory_removed_on_tv', channels='Sender 1') as ctx:
             self.sync(tv).adopt()
         self.assertEqual(tv_write.signature(self.work), signature)
-        self.assertIn('Sender 12', I18N.render(ctx.exception, 'de'))
+        self.assertIn('Sender 1', I18N.render(ctx.exception, 'de'))
+
+    def test_list_membership_added_locally_counts_as_in_a_list(self):
+        with sqlite3.connect(self.work) as db:
+            db.execute("UPDATE tuner_on SET fav_chan_gr_h='1', favoriteIdxH=0 WHERE dvc_chan_id=?", (BASE[-1]['id'],))
+        with assert_raises_message(self, 'error.plan.inventory_removed_on_tv', channels='Sender 12'):
+            self.sync(self.tv(BASE[:-1])).adopt()
 
     def test_channel_renamed_on_tv_is_reported(self):
         renamed = [dict(c, name='Sender 3 HD') if c['name'] == 'Sender 3' else c for c in BASE]
@@ -129,6 +150,7 @@ class PrepareTvWriteTests(InventoryTestCase):
                 patch.object(tv_write, 'live_channels', lambda c: live(BASE + NEW)):
             preview = app.prepare_tv_write('tv', 'pw')
         self.assertEqual(sorted(preview['adoptedChannels']), ['', 'More Than Sports TV', 'ffn'])
+        self.assertEqual(preview['removedChannels'], [])
         self.assertEqual(preview['total'], 1)
         self.assertTrue((self.dir / 'before-tv-adopt.sqlite').exists())
 

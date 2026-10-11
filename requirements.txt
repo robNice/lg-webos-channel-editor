@@ -1,0 +1,3 @@
+# Runtime dependency for the TV connection (SSH/SFTP). Web server and SQLite
+# use the Python standard library only.
+paramiko>=3.4,<4

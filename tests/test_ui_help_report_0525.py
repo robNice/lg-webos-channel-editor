@@ -16,9 +16,9 @@ class HelpPopupTests(unittest.TestCase):
 
     def test_help_button_in_header(self):
         header = re.search(r'<header>.*?</header>', HTML, re.S).group(0)
-        self.assertRegex(header, r'<button[^>]*id="helpbtn"[^>]*aria-label="Hilfe[^"]*"[^>]*>\?</button>')
+        self.assertRegex(header, r'<button[^>]*id="helpbtn"[^>]*aria-label="Hilfe[^"]*"[^>]*><svg[^>]*><use href="#i-help"/></svg></button>')
         english = app.INDEX.render('en').decode()
-        self.assertRegex(english, r'<button[^>]*id="helpbtn"[^>]*aria-label="Help[^"]*"[^>]*>\?</button>')
+        self.assertRegex(english, r'<button[^>]*id="helpbtn"[^>]*aria-label="Help[^"]*"[^>]*><svg[^>]*><use href="#i-help"/></svg></button>')
 
     def test_help_text_kept_as_template(self):
         template = re.search(r'<template id="help-text">(.*?)</template>', HTML, re.S)
@@ -61,5 +61,7 @@ class ToolbarHintTests(unittest.TestCase):
             self.assertNotIn('class="tag"', header)
             tooltip = I18N.translate(lang, 'toolbar.tv_write_title')
             self.assertNotEqual(tooltip, 'toolbar.tv_write_title')
-            self.assertIn(f'<button class="btn primary" id="tvwrite" title="{tooltip}">', header)
+            # v0.6.1: icon-only button; the hint stays part of the tooltip.
+            self.assertRegex(header, r'<button class="btn primary icon-btn"[^>]*id="tvwrite"[^>]*title="[^"]*'
+                             + re.escape(tooltip) + '"')
         self.assertNotIn('toolbar.tag', I18N.messages('en'))

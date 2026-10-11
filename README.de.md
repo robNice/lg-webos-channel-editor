@@ -4,7 +4,7 @@
 
 [English](README.md) · **Deutsch**
 
-**Aktuelle Version: v0.6.0.** Zuletzt am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). v0.6.0 ergänzt die Übertragung um Fortschrittsanzeige, Abbruch zwischen den Schritten und automatischen Re-Import; die Luna-Schreiboperationen selbst sind unverändert, diese Version ist aber noch nicht am TV getestet.
+**Aktuelle Version: v0.6.1.** Zuletzt vollständig am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). Mit v0.6.0 wurden Neunummerierungen (Verschieben und Tauschen, ohne dass der TV umschaltet) und das Umbenennen einer Liste am TV bestätigt; Kopien mit Listenübernahme sind dort noch nicht erprobt. v0.6.1 bündelt Export und Import in je einem Dialog; ein Import stellt ein Backup auf der aktuellen Arbeitskopie wieder her.
 
 Browserbasierte, **lokal auf dem Computer laufende** Verwaltung der LG-webOS-Sender- und Favoritenlisten. Die Anwendung importiert eine SQLite-Sicherung des LG-TV per Root-SSH oder aus einer Datei, bearbeitet eine lokale Arbeitskopie und kann ausgewählte Änderungen **nach TV-Backup, Live-Abgleich, Vorschau und ausdrücklicher Bestätigung über LG-Luna-APIs zurückübertragen**. Eine laufende LG-SQLite- oder LevelDB-Datei wird niemals direkt überschrieben.
 
@@ -13,15 +13,15 @@ Browserbasierte, **lokal auf dem Computer laufende** Verwaltung der LG-webOS-Sen
 ## Voraussetzungen und Start
 
 - **Python 3.10+** auf einem beliebigen Betriebssystem (Linux, macOS, Windows). Webserver, SQLite und Dateiimport nutzen ausschließlich die Python-Standardbibliothek. Entwickelt und getestet unter Linux.
-- **Paramiko** für die Verbindung zum TV (Import per SSH, TV-Abgleich, Übertragung auf den TV): `python3 -m pip install paramiko`. Wer nur eine bereits gesicherte SQLite-Datei lädt und lokal bearbeitet, braucht Paramiko nicht.
+- **Paramiko** für die Verbindung zum TV (Import per SSH, Sync-Bericht, Übertragung auf den TV): `python3 -m pip install -r requirements.txt`. Wer nur eine bereits gesicherte SQLite-Datei lädt und lokal bearbeitet, braucht Paramiko nicht.
 - Für die TV-Verbindung: gerooteter LG-TV mit SSH-Zugang für `root`, erreichbare IP/Hostname, Root-Passwort, `sqlite3` und `luna-send` auf dem TV.
-- Bei der ersten Verbindung den echten SSH-Hostschlüssel separat prüfen und in `known_hosts` hinterlegen. Der Editor lehnt unbekannte Hostschlüssel ab.
+- SSH-Hostschlüssel: Schlüssel aus `~/.ssh/known_hosts` werden akzeptiert. Bei einem unbekannten TV zeigt der Login-Dialog einmal den SSH-Fingerprint; nach deiner Bestätigung wird er in `data/known_hosts` gespeichert. Ändert sich der Schlüssel später, wird die Verbindung abgelehnt.
 
 ```bash
 # Im Projektverzeichnis
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-python3 -m pip install paramiko
+python3 -m pip install -r requirements.txt
 python3 app.py                   # Windows: python app.py
 ```
 
@@ -29,14 +29,33 @@ Anschließend **http://127.0.0.1:8765** im Browser öffnen. Optional:
 
 ```bash
 python3 app.py --port 8766
+python3 app.py --host 0.0.0.0     # im Netzwerk erreichbar (ohne Anmeldung – nur im vertrauenswürdigen Heimnetz)
 python3 app.py --db /pfad/zur/bereits/gesicherten/channel.sqlite
 ```
 
-Der Webserver bindet sich **ausschließlich an `127.0.0.1`**, ohne Benutzeranmeldung. **Nicht direkt ins Internet oder über einen öffentlichen Reverse Proxy freigeben.** Das TV-Root-Passwort wird für die Verbindung verwendet und nicht dauerhaft gespeichert; nur die zuletzt verwendeten Hostnamen/IPs (maximal 12) stehen im `localStorage` des jeweiligen Browsers.
+Standardmäßig bindet sich der Webserver **nur an `127.0.0.1`**, ohne Benutzeranmeldung (`--host` / `LG_EDITOR_HOST` ändern das, das Docker-Image lauscht auf allen Schnittstellen). **Nicht direkt ins Internet oder über einen öffentlichen Reverse Proxy freigeben.** Das TV-Root-Passwort wird für die Verbindung verwendet und nicht dauerhaft gespeichert; nur die zuletzt verwendeten Hostnamen/IPs (maximal 12) stehen im `localStorage` des jeweiligen Browsers.
 
 Nach einem Update den laufenden Server neu starten – Python lädt den Code nur beim Start.
 
-## Aktueller Funktionsumfang (v0.6.0)
+## Docker
+
+Images werden in der GitHub Container Registry für `linux/amd64` und `linux/arm64` veröffentlicht:
+
+| Tag | Inhalt |
+| --- | --- |
+| `ghcr.io/robnice/lg-webos-channel-editor:latest` | neueste Release-Version |
+| `ghcr.io/robnice/lg-webos-channel-editor:0.6.1` | eine feste Release-Version |
+| `ghcr.io/robnice/lg-webos-channel-editor:dev` | aktueller Entwicklungsstand, nur zum Testen |
+
+Ein Beispiel zum Kopieren ist [`docs/docker-compose.example.yml`](docs/docker-compose.example.yml): Host-Port (linke Zahl, Standard `8765`) und Host-Verzeichnis für `/app/data` anpassen, dann `docker compose up -d` (oder in das Compose-Plugin von OpenMediaVault einfügen) und `http://<server>:8765` öffnen.
+
+- `/app/data` enthält Arbeitskopie, Sicherungen, `settings.json` und die bestätigten TV-Hostschlüssel (`known_hosts`) – einbinden, damit bei Updates nichts verloren geht.
+- Beim ersten TV-Login im Container fragt der Login-Dialog nach dem SSH-Fingerprint des TV (im Container gibt es keine `~/.ssh/known_hosts`).
+- Der Editor hat **keine eigene Anmeldung**: Port nur im vertrauenswürdigen Heimnetz freigeben, nie ins Internet.
+
+Releases entstehen automatisch: Ein Tag `vX.Y.Z` auf `main` (muss zu `version.py` passen) baut nach erfolgreichen Tests `:X.Y.Z` und `:latest`; jeder Push auf `dev` baut `:dev`.
+
+## Aktueller Funktionsumfang (v0.6.1)
 
 | Funktion | Stand |
 | --- | --- |
@@ -48,18 +67,21 @@ Nach einem Update den laufenden Server neu starten – Python lädt den Code nur
 | Favoriten automatisch fortlaufend nummerieren | Implementiert; mehrere Schritte und Platztauschketten; auf realem TV mit v0.5.24 erfolgreich getestet |
 | Sender, bei denen LG beim Nummernwechsel einen zweiten Eintrag erzeugt (bisher jeder Wechsel von über 99 auf 1–99) | Die Kopie übernimmt alle Favoritenlisten des Senders; das Original verbleibt ohne Favoriten in der globalen Liste; nur unter strengen Identitäts- und Zustandsprüfungen |
 | Vorhandene Astra-Kopien / doppelte A-Favoriten | Bedingte Wiederverwendung bzw. ausdrücklich bestätigte Zusammenführung |
-| TV-Abgleich / Sicherung (nur lesend) | Implementiert; TV-Snapshot nach `data/tv-backups/`, Bericht nennt die betroffenen Sender (Nummer, Favoriten A–H, nur lokal / nur TV) |
+| Sync-Bericht (nur lesend) | Implementiert; vergleicht eine temporäre TV-Kopie mit der Arbeitskopie (keine Sicherung), Bericht nennt die betroffenen Sender (Nummer, Favoriten A–H, nur lokal / nur TV) |
+| Einstellungen | Implementiert; Anzahl aufbewahrter TV-Sicherungen (Standard 30, ältere werden automatisch gelöscht), gespeichert in `data/settings.json` |
 | TV-Zustand vergleichen, sichern, Vorschau erstellen, Live-Schreiben bestätigen | Implementiert; Fortschrittsdialog (Schritt x von n), Abbruch zwischen den Schritten, danach automatischer Re-Import vom TV; bei Fehler Abbruch **ohne automatische Rückabwicklung** |
 | Favoritenlisten umbenennen | Implementiert; Übertragung mit „Auf TV übertragen“ über `setGroupName` (wie LGs eigene Senderbearbeitung), Prüfung in der TV-Datenbank; mit v0.6.0 an Liste H am TV bestätigt |
-| Arbeitsdatenbank, CSV und JSON exportieren | Implementiert |
-| Favoritenliste oder Senderbestand vom TV neu laden | Implementiert; eine lokal geänderte Liste wird nur nach Bestätigung ersetzt |
+| Arbeitskopie als SQLite, CSV oder JSON exportieren | Implementiert; ein **Export**-Button; für CSV/JSON ist der Inhalt wählbar (alle Sender oder nur Listensender, Listen A–H, Listennamen, Nummern, LG-Rohdaten); CSV mit Rohdaten ist ein ZIP (eine CSV pro Tabelle), JSON mit Rohdaten ein vollständiges Backup; SQLite ist immer vollständig |
+| Backup importieren (SQLite, CSV, JSON) | Implementiert; ein **Import**-Button, Format wird automatisch erkannt; du wählst, welche Listen, Listennamen und Programmnummern auf die aktuelle Arbeitskopie übernommen werden (oder ersetzt sie mit einer SQLite-Datei komplett) |
+| Favoritenlisten oder Senderbestand vom TV neu laden | Implementiert; alle Listen A–H (Listen-Spalte), die gewählte Liste (Mitte) oder den Senderbestand (rechts); lokal geänderte Listen werden nur nach Bestätigung ersetzt |
 | Oberfläche Deutsch / Englisch | Implementiert; Sprache aus der Browsereinstellung, weitere Sprachen ergänzbar |
 
 **Neue Programmnummern sind in dieser Anwendung auf `1–99` begrenzt**, entsprechend dem LG-Eingabedialog. Das ist eine **bewusste UI-Regel**, keine Behauptung, dass die Luna-API niemals höhere Nummern akzeptiert. Bereits existierende Nummern über 99 (z. B. 101, 1004, 4096) werden unverändert eingelesen und angezeigt. Automatisches Umnummerieren kann andere Sender und die globale Nummerierung beeinflussen; die Vorschau weist darauf hin. LG nummeriert jede Empfangsart (Satellit, Kabel, Antenne) getrennt; eine Favoritenliste lässt sich daher nur durchnummerieren, wenn alle ihre Sender dieselbe Empfangsart haben. Senderlisten aus früheren Kabel- oder Antennensuchläufen bleiben auf dem TV erhalten, auch wenn dort nichts mehr angeschlossen ist.
 
 ### Empfohlener Bedienablauf
 
-1. Beim Öffnen der Seite einmal am TV anmelden (IP und Root-Passwort; nur im Speicher des Browsers, bis die Seite neu geladen wird oder du dich abmeldest). Danach **„Vom LG importieren“** benutzen oder einen vorhandenen SQLite-Abzug laden. Ein Import **ersetzt die bisherige lokale Arbeitskopie**; vorher bei Bedarf über die Export-Funktion sichern.
+1. Beim Öffnen der Seite einmal am TV anmelden (IP und Root-Passwort; nur im Speicher des Browsers, bis die Seite neu geladen wird oder du dich abmeldest). Nach dem Login wählst du, ob die aktuellen TV-Daten geladen werden oder die lokale Arbeitskopie bleibt. Die Toolbar zeigt Icons; der Name erscheint beim Darüberfahren. Der TV-Chip zeigt, ob der TV erreichbar ist (grüner/roter Punkt, Prüfung alle 30 Sekunden). Danach **„Vom TV importieren“** benutzen (Startbildschirm oder Toolbar) oder eine gesicherte SQLite-Datei über **Import** laden. Ein Import vom TV **ersetzt die bisherige lokale Arbeitskopie** nach einer Rückfrage (abbrechbar); vorher bei Bedarf über **Export** sichern.
+   Um ein älteres Backup wiederherzustellen, zuerst den aktuellen Stand vom TV importieren, dann **Import** benutzen: Das Backup wird auf die aktuelle Arbeitskopie angewendet. Nach dem Hochladen fragt ein Dialog, was übernommen werden soll: Favoritenlisten (einzeln), Listennamen und Programmnummern. Nummern nur für Sender der gewählten Listen und nur 1–99; Sender auf einer Zielnummer weichen auf eine freie Nummer aus (die Vorschau warnt, wenn Sender anderer Listen betroffen sind). Sender werden über die Kanal-ID zugeordnet, sonst über DVB-Dienst, Name, Satellit und Empfangsart; nicht mehr vorhandene oder mehrdeutige Sender werden übersprungen und aufgelistet. So bleibt die Übertragung zum TV möglich, auch wenn sich der TV seit dem Backup verändert hat. Alternativ kann eine SQLite-Datei oder ein JSON-Export mit LG-Rohdaten die Arbeitskopie komplett ersetzen (dann kann die Übertragung scheitern, falls sich der TV geändert hat). Angeboten wird nur, was die Datei enthält: nicht exportierte Listen werden nie geleert.
 2. Favoriten A–H bearbeiten, Sendernummern einzeln ändern oder „Sender automatisch nummerieren“ ausführen. Diese Änderungen finden **zunächst ausschließlich lokal** statt.
 3. Für TV-Änderungen **„Auf TV übertragen“** aufrufen. Der Editor erstellt eine TV-Sicherung, holt eine Live-Senderliste, berechnet die konkreten Luna-Operationen und zeigt sie zur Bestätigung. Sender, die der TV seit dem Import selbst angelegt hat (automatische Senderaktualisierung von LG, z. B. nach dem Umschalten auf einen anderen Transponder), werden in die Arbeitskopie übernommen und in der Vorschau genannt; vom TV entfernte oder umbenannte Sender erfordern einen neuen Import.
 4. Die Vorschau prüfen (insbesondere **Platztausche**, betroffene Fremdsender, **Astra-Kopien** und mögliche **Zusammenführungen doppelter Favoriten**) und die Ausführung ausdrücklich bestätigen. Unmittelbar vor dem Schreiben wird erneut gesichert und geprüft.
@@ -81,7 +103,10 @@ Die Oberfläche und alle Meldungen gibt es derzeit auf **Deutsch** und **Englisc
 | `data/before-renumber.sqlite` | Sicherung vor lokalem automatischem Nummerierungsvorgang; bei späteren Vorgängen wieder überschreibbar |
 | `data/before-single-number.sqlite` | Sicherung vor lokaler manueller Nummernänderung |
 | `data/before-tv-adopt.sqlite` | Sicherung vor Übernahme von Sendern, die der TV selbst angelegt hat |
-| `data/tv-backups/tv-*.sqlite` | Zeitgestempelte TV-Snapshots aus dem Sync-Preflight |
+| `data/before-file-import.sqlite` | Sicherung vor dem Wiederherstellen einer Backup-Datei auf die Arbeitskopie |
+| `data/tv-backups/tv-*.sqlite` | Zeitgestempelte TV-Sicherungen (Übertragungsvorschau, unmittelbar vor dem Schreiben, Neu-Einlesen vom TV); es bleiben nur die neuesten laut Einstellungen |
+| `data/settings.json` | Einstellungen (Anzahl aufbewahrter TV-Sicherungen) |
+| `data/known_hosts` | Im Login-Dialog bestätigte SSH-Hostschlüssel von TVs |
 
 Der Ordner `data/` ist in `.gitignore` ausgeschlossen. **Bei Updates niemals löschen oder durch eine leere Kopie ersetzen.** Empfindliche lokale Backups nicht versehentlich in Git veröffentlichen.
 
@@ -111,8 +136,16 @@ tv_write.py                  TV-Live-Abfrage, Identitätsabgleich, Operationen, 
 tv_inventory.py              Übernimmt vom TV selbst angelegte Sender; lädt eine Favoritenliste vom TV neu
 tv_groups.py                 Überträgt umbenannte Favoritenlisten (setGroupName, Prüfung in der TV-Datenbank)
 tv_login.py                  Prüft die TV-Anmeldung (SSH, benötigte Werkzeuge) einmal pro Seitenaufruf
+tv_ping.py                   Erreichbarkeit des TV für den Online-Status (TCP zum SSH-Port, ohne Login)
+tv_hostkeys.py               SSH-Hostschlüssel: System-known_hosts plus beim Login bestätigte Fingerprints (data/known_hosts)
+requirements.txt             Python-Abhängigkeit (paramiko)
+Dockerfile, .dockerignore    Container-Image; Beispiel in docs/docker-compose.example.yml
+.github/workflows/           Image-Builds: Release bei v*-Tags auf main, :dev bei Pushes auf dev
 tv_job.py                    Hintergrund-Job für TV-Übertragung: Fortschritt, Abbruch zwischen Schritten, Re-Import
-tv_compare.py                Nur lesender Vergleich TV-Snapshot ↔ Arbeitskopie (Bericht „TV-Abgleich“)
+tv_compare.py                Nur lesender Vergleich TV-Snapshot ↔ Arbeitskopie („Sync-Bericht“)
+backup_retention.py          Einstellungsdatei und automatische Begrenzung der TV-Sicherungen
+backup_export.py             Export mit Auswahl: Editor-CSV/JSON, LG-Rohdaten (JSON mit Schema, CSV als ZIP)
+backup_restore.py            Datei-Import: Formaterkennung, Backup-Abbild, Wiederherstellen auf die Arbeitskopie
 version.py                   Einzige Quelle der Versionsnummer (APP_VERSION, ?v=-Cache-Busting, Versions-Chip)
 i18n.py                      Lokalisierung: Sprachaushandlung, Message/LocalizedError, Fallback Englisch
 locales/<sprache>/           messages.json je Sprache (derzeit de, en); neuer Ordner = neue Sprache
@@ -124,7 +157,7 @@ tests/                       Automatisierte Regressionstests
 data/                        Lokale SQLite-Daten und Backups (nicht versionieren)
 ```
 
-Beispielhafte HTTP-Endpunkte: `GET /api/status`, `GET /api/channels`, `GET /api/renumber/preview`, `POST /api/import`, `POST /api/import-tv`, `POST /api/channel-number`, `POST /api/renumber`, `POST /api/tv-write-preview`, `POST /api/tv-write-commit` (startet einen Hintergrund-Job), `GET /api/tv-write-status`, `POST /api/tv-write-cancel` und `POST /api/tv-sync-preflight`. Die Web-App arbeitet ausschließlich über den lokalen HTTP-Server; die Verbindung zum LG übernimmt Python/Paramiko.
+Beispielhafte HTTP-Endpunkte: `GET /api/status`, `GET /api/channels`, `GET /api/renumber/preview`, `POST /api/import` (Upload und Analyse), `POST /api/import-plan`, `POST /api/import-apply`, `GET /download/<sqlite|csv|json>?lists=…&channels=all|lists&names=0|1&numbers=0|1&raw=0|1`, `POST /api/import-tv`, `POST /api/channel-number`, `POST /api/renumber`, `POST /api/tv-write-preview`, `POST /api/tv-write-commit` (startet einen Hintergrund-Job), `GET /api/tv-write-status`, `POST /api/tv-write-cancel` und `POST /api/tv-sync-report`, `GET`/`POST /api/settings`, `GET /api/tv-ping`. Die Web-App arbeitet ausschließlich über den lokalen HTTP-Server; die Verbindung zum LG übernimmt Python/Paramiko.
 
 ### Tests
 
@@ -136,7 +169,7 @@ Für Änderungen an Nummerierung, Identität und TV-Schreibpfad müssen insbeson
 
 ### Versions- und Dokumentationspflege
 
-- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus. Die Luna-Schreiboperationen sind unverändert; v0.6.0 ist noch nicht am TV bestätigt.
+- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus und ändert Nummern über `iepg` (Neunummerierung und Listen-Umbenennung am TV bestätigt); v0.6.1 bündelt Export und Import in je einem Dialog und stellt Backups auf der aktuellen Arbeitskopie wieder her.
 - Bei künftigen App-Releases `APP_VERSION` in `version.py`, beide READMEs und Tests konsistent halten. `?v=` und der Versions-Chip werden automatisch aus `version.py` gesetzt. Keine ungültigen verschachtelten `<script>`-/`<style>`-Tags erzeugen.
 
 ## Lizenz
