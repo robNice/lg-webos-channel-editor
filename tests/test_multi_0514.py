@@ -71,9 +71,11 @@ class MultiNumberingTest(unittest.TestCase):
             self.assertIn(str(target),final)
             self.assertEqual(tv_write._technical_id(final[str(target)]['channelId']),
                              tv_write._technical_id(cid))
-        self.assertEqual(len(sim.calls),len(ops))
-        self.assertEqual(len(ops),len(results))
-        return ops
+        # Order steps send nothing when the list order is already right.
+        numbering=[o for o in ops if o['kind']!='order']
+        self.assertEqual(len(sim.calls),len(numbering))
+        self.assertEqual(len(numbering),len([r for r in results if r['kind']!='order']))
+        return numbering
 
     def test_three_cycle_is_two_verified_swaps(self):
         for path in (self.base,self.work):
@@ -85,11 +87,18 @@ class MultiNumberingTest(unittest.TestCase):
         ops=self.run_case({A:2,B:3,C:1},sim)
         self.assertEqual([o['kind'] for o in ops],['swap','swap'])
 
+    def favorite_a(self, cid):
+        for path in (self.base,self.work):
+            with sqlite3.connect(path) as c:
+                c.execute('UPDATE tuner_on SET fav_chan_gr_a="1",favoriteIdxA=0 WHERE dvc_chan_id=?',(cid,))
+
     def test_free_target_first_when_moving_from_above_99(self):
-        sim=SimTV([(FOURMEDIA,'4mediathek',4096,[]),(WELT_13,'WELT HD',13,[])])
+        # v0.6.0: >99 -> 1..99 uses the copy path (favorite A); the simulated TV moves.
+        self.favorite_a(FOURMEDIA)
+        sim=SimTV([(FOURMEDIA,'4mediathek',4096,['A']),(WELT_13,'WELT HD',13,[])])
         ops=self.run_case({FOURMEDIA:13,WELT_13:98},sim)
         self.assertEqual([(o['kind'],o['from'],o['to']) for o in ops],
-                         [('number','13','98'),('number','4096','13')])
+                         [('number','13','98'),('copy_favorite','4096','13')])
 
     def test_four_way_cycle(self):
         D='7_19_4_4_1031_5309_1'
@@ -104,7 +113,8 @@ class MultiNumberingTest(unittest.TestCase):
         self.assertTrue(all(o['kind']=='swap' for o in ops))
 
     def test_preflight_rejects_changed_tv_slot_before_writing(self):
-        sim=SimTV([(FOURMEDIA,'4mediathek',4096,[]),(WELT_13,'WELT HD',13,[])])
+        self.favorite_a(FOURMEDIA)
+        sim=SimTV([(FOURMEDIA,'4mediathek',4096,['A']),(WELT_13,'WELT HD',13,[])])
         self.move_local({FOURMEDIA:13,WELT_13:98})
         # A foreign channel now occupies the supposedly free slot 98.
         sim.items.append({'channelId':'unexpected', 'channelName':'U', 'channelNumber':'98',

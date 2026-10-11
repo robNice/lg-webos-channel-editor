@@ -46,7 +46,7 @@ class OtherGroupCopyTest(ExistingCopyTest):
 
     def test_A_already_used_blocks_adoption(self):
         sim = self._add_copy(groups=['A'])
-        with assert_raises_message(self, 'error.plan.copy_already_in_a'):
+        with assert_raises_message(self, 'error.plan.copy_already_in_list', groups='A'):
             tv_write.make_plan(self.work, self.base, sim.live(None))
         self.assertEqual(sim.calls, [])
 

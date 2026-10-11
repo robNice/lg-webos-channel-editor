@@ -12,7 +12,10 @@ from pathlib import Path
 
 GROUPS = 'ABCDEFGH'
 SERVICE = 'com.webos.service.iepg'
-NUMBER_SERVICE = 'com.webos.service.legacybroadcast.channel'
+# v0.6.0: number changes go through iepg like LG's own channel editor app.
+# Confirmed on the TV: same move/swap results and IDs as the former
+# legacybroadcast.channel service, but the TV no longer tunes to the channel.
+NUMBER_SERVICE = SERVICE
 
 
 def signature(path):
@@ -315,16 +318,22 @@ def make_plan(working_path, tv_backup_path, live):
     # as explicitly different operations, never as a successful native move.
     # Keep the original channel in the GLOBAL list; migrate its favorite group
     # memberships to the newly created entry after verifying both IDs.
+    # v0.6.0 (user decision after real TV evidence): every >99 -> 1..99
+    # change observed on the TV was a copy, including channels WITHOUT
+    # satelliteLcn_flag (HGTV HD 1827 -> 26 left the original on 1827 and
+    # created a new entry). The copy path therefore no longer depends on the
+    # flag; an existing copy at the target is reused.
     copy_keys = set()
     for op in numbers:
         source = baseline[op['key']]
         if (source['key'][2] == 'Satellite'
-                and source.get('satellite_lcn_flag') == 1
                 and int(op['from']) > 99 and 1 <= int(op['to']) <= 99):
-            if source['groups'] != edited[op['key']]['groups']:
-                raise LocalizedError('error.plan.copy_with_group_change', name=source['name'])
-            if not source['groups']['A']:
-                raise LocalizedError('error.plan.copy_only_group_a', name=source['name'])
+            # v0.6.0: the copy takes over ALL lists the channel has after this
+            # transfer. List adds/removes run first (on the original), so the
+            # copy receives the target state. A channel in no list just gets
+            # the copy; its original stays visible.
+            if not any(edited[op['key']]['groups'].values()):
+                op['warning'] = Message('tv.write.copy_without_lists', old=op['from'], new=op['to'])
             copy_keys.add(op['key'])
 
     # Compute a *sequence* of independently verifiable native LG moves/swaps.
@@ -363,8 +372,11 @@ def make_plan(working_path, tv_backup_path, live):
                 # B-H membership is compatible with reuse. Never steal A
                 # membership from a different selected station and do not
                 # combine reuse with pending changes to the copy's groups.
-                if baseline[copy_key]['groups']['A'] or edited[copy_key]['groups']['A']:
-                    raise LocalizedError('error.plan.copy_already_in_a', number=goal[key])
+                moving = _copy_groups(edited[key])
+                shared = sorted(g for g in moving
+                                if baseline[copy_key]['groups'][g] or edited[copy_key]['groups'][g])
+                if shared:
+                    raise LocalizedError('error.plan.copy_already_in_list', number=goal[key], groups=', '.join(shared))
                 if baseline[copy_key]['groups'] != edited[copy_key]['groups']:
                     raise LocalizedError('error.plan.copy_simultaneous_group_change', number=goal[key])
                 if copy_key in changed:
@@ -453,7 +465,8 @@ def make_plan(working_path, tv_backup_path, live):
                 if key in copy_keys:
                     # LG creates a second unique channel entry. The original
                     # remains at its former (possibly duplicated) >99 slot.
-                    operations.append({'kind':'copy_favorite','key':key,'from':old,'to':dest})
+                    operations.append({'kind':'copy_favorite','key':key,'from':old,'to':dest,
+                                       **({'warning':changed[key]['warning']} if changed[key].get('warning') else {})})
                     slot_owner[dst]={'__new_copy__'+source_id}
                 else:
                     operations.append({'kind':'number','key':key,'from':old,'to':dest})
@@ -479,10 +492,11 @@ def make_plan(working_path, tv_backup_path, live):
         # *after* all copies have acquired favorite membership.
         prior_orders={op['group']:op for op in operations if op['kind']=='order'}
         operations=[op for op in operations if op['kind']!='order']
+        copied_groups=set().union(*(_copy_groups(edited[key]) for key in copy_keys))
         for group in GROUPS:
             if group in prior_orders:
                 operations.append(prior_orders[group])
-            elif group == 'A':
+            elif group in copied_groups:
                 operations.append({'kind':'order', 'group':group,
                                    'keys':[c['key'] for c in desired_order(edited,group)]})
     # A no-op plan must really mean no changes in the editable SQLite fields.
@@ -588,6 +602,21 @@ def _wait_group(client, channel_id, group, expected, delays=(0, 0.25, 0.5, 0.8))
                          expected=str(expected), actual=str(sorted(last)))
 
 
+def _peer_state(holders, own_id):
+    """Number and favorite groups of the other entries on a slot, keyed by channel ID."""
+    return {str(c.get('channelId')): (str(c.get('channelNumber')), tuple(sorted(c.get('favoriteGroup') or [])))
+            for c in holders if str(c.get('channelId')) != str(own_id)}
+
+
+def _check_peers_unchanged(peers, live):
+    after_by_id = {str(c.get('channelId')): c for c in flatten_live(live)}
+    for peer_id, (previous_number, previous_groups) in peers.items():
+        peer = after_by_id.get(peer_id)
+        if (peer is None or str(peer.get('channelNumber')) != previous_number
+                or tuple(sorted(peer.get('favoriteGroup') or [])) != previous_groups):
+            raise LocalizedError('error.number.peer_changed')
+
+
 def _wait_for_copy(client, source, old_number, target_number,
                    delays=(0, 0.25, 0.5, 0.8, 1.2, 1.7, 2.0)):
     """Detect one *additional* LG entry; do not mistake a move for a copy."""
@@ -625,63 +654,75 @@ def _wait_for_copy(client, source, old_number, target_number,
     raise LocalizedError('error.copy.not_created', old=old_number, target=target_number, state=last_state)
 
 
-def _migrate_copy_favorites(client, source, new_channel_id, original_channel_id):
-    """Only remove A from original once addition to the copy is observed.
+def _copy_groups(source):
+    """Favorite lists that move from an original to its LG copy (v0.6.0: all of them)."""
+    return {g for g in GROUPS if source['groups'][g]}
 
-    Luna can return false without an error description. Always check the
-    authoritative live state after a response; do not infer success or loss
-    of membership from the returnValue alone, and do not retry the write.
+
+def _migrate_copy_favorites(client, source, new_channel_id, original_channel_id):
+    """Move ALL favorite lists of the original to the copy (v0.6.0).
+
+    First add every list to the copy and confirm each one; only then remove
+    them from the original, again confirming each step. Luna can return false
+    without an error description: always check the live state after a
+    response, never infer success or loss from returnValue, never retry.
     """
-    group = 'A'
-    if not source['groups'][group]:
-        raise LocalizedError('error.copy.requires_group_a')
+    moving = sorted(_copy_groups(source))
+    if not moving:
+        return live_channels(client)
     context = Message('diag.copy_context', name=str(source['name']),
                       original_id=str(original_channel_id), copy_id=str(new_channel_id))
     before = live_channels(client)
     old_before = _channel_by_id(before, original_channel_id)
     new_before = _channel_by_id(before, new_channel_id)
     copy_groups_before = set(new_before.get('favoriteGroup') or [])
-    if (group not in set(old_before.get('favoriteGroup') or [])
-            or group in copy_groups_before
+    old_groups_before = set(old_before.get('favoriteGroup') or [])
+    if (not set(moving) <= old_groups_before
+            or copy_groups_before & set(moving)
             or not copy_groups_before.issubset(set(GROUPS))):
         raise LocalizedError('error.copy.unsafe_before_write', context=context,
                              original_groups=str(old_before.get('favoriteGroup')),
                              copy_groups=str(new_before.get('favoriteGroup')))
-    old_groups_before = set(old_before.get('favoriteGroup') or [])
-    ret = luna(client, 'setChannelFavoriteGroup',
-               {'channelId': [new_channel_id], 'favoriteGroup': [group]})
-    try:
-        # Including on returnValue:false: LG's returnValue is not proof of
-        # the observed state. Re-read BOTH entries and ALL favorite groups.
-        after_add = _wait_group(client, new_channel_id, group, True)
-    except ValueError as exc:
-        raise LocalizedError('error.copy.add_a_unconfirmed', context=context,
-                             response=str(ret), cause=exc) from exc
-    if (set(_channel_by_id(after_add, new_channel_id).get('favoriteGroup') or [])
-            != copy_groups_before | {'A'}
-            or set(_channel_by_id(after_add, original_channel_id).get('favoriteGroup') or [])
-            != old_groups_before):
-        raise LocalizedError('error.copy.other_lists_changed', context=context)
-    # Never remove A from the original until we observed A on the new entry,
-    # its B-H groups are unchanged and the original still has its old groups.
-    ret_remove = luna(client, 'releaseChannelFavoriteGroup',
-                      {'channelId': [original_channel_id], 'favoriteGroup': [group]})
-    try:
-        _wait_group(client, original_channel_id, group, False)
-    except ValueError as exc:
-        raise LocalizedError('error.copy.remove_a_unconfirmed', context=context,
-                             response=str(ret_remove), cause=exc) from exc
+    added = set()
+    for group in moving:
+        ret = luna(client, 'setChannelFavoriteGroup',
+                   {'channelId': [new_channel_id], 'favoriteGroup': [group]})
+        try:
+            # Including on returnValue:false: LG's returnValue is not proof of
+            # the observed state. Re-read BOTH entries and ALL favorite groups.
+            after_add = _wait_group(client, new_channel_id, group, True)
+        except ValueError as exc:
+            raise LocalizedError('error.copy.add_a_unconfirmed', group=group, context=context,
+                                 response=str(ret), cause=exc) from exc
+        added.add(group)
+        if (set(_channel_by_id(after_add, new_channel_id).get('favoriteGroup') or [])
+                != copy_groups_before | added
+                or set(_channel_by_id(after_add, original_channel_id).get('favoriteGroup') or [])
+                != old_groups_before):
+            raise LocalizedError('error.copy.other_lists_changed', context=context)
+    # Never remove a list from the original until ALL lists were observed on
+    # the copy and the original still has its old groups.
+    for group in moving:
+        ret_remove = luna(client, 'releaseChannelFavoriteGroup',
+                          {'channelId': [original_channel_id], 'favoriteGroup': [group]})
+        try:
+            _wait_group(client, original_channel_id, group, False)
+        except ValueError as exc:
+            raise LocalizedError('error.copy.remove_a_unconfirmed', group=group, context=context,
+                                 response=str(ret_remove), cause=exc) from exc
     current = live_channels(client)
     new = _channel_by_id(current, new_channel_id)
     old = _channel_by_id(current, original_channel_id)
-    if (set(new.get('favoriteGroup') or []) != copy_groups_before | {'A'}
-            or set(old.get('favoriteGroup') or [])
-            != {g for g in GROUPS if source['groups'][g] and g != 'A'}):
+    if (set(new.get('favoriteGroup') or []) != copy_groups_before | set(moving)
+            or set(old.get('favoriteGroup') or []) != old_groups_before - set(moving)):
         raise LocalizedError('error.copy.transfer_incomplete', context=context)
     return current
 
 
-def apply_operations(client,operations,edited,baseline):
+def apply_operations(client,operations,edited,baseline,progress=None):
+    # progress(index, op) runs before each operation and with op=None before the
+    # final check (v0.6.0, progress display/cancel). An exception raised there
+    # stops before that operation; the confirmed write logic is unchanged.
     results=[]
     # Each new LG copy has an identity separate from the original retained
     # global channel. Order/next-step confirmation must track that new ID.
@@ -689,7 +730,8 @@ def apply_operations(client,operations,edited,baseline):
     current_identity={}
     copy_outcomes={}
     copy_final_groups={}
-    for op in operations:
+    for index,op in enumerate(operations):
+        if progress is not None: progress(index,op)
         kind=op['kind']; key=tuple(op.get('key') or [])
         if kind in ('add','remove'):
             live=live_channels(client); item=match_live(baseline[key],live)
@@ -726,7 +768,9 @@ def apply_operations(client,operations,edited,baseline):
                     raise LocalizedError('error.order.unconfirmed', response=str(ret.get('returnValue')))
                 results.append({'kind':'order','group':group,'channel':target[0],'apiReturnValue':ret.get('returnValue')})
         elif kind=='reuse_copy_favorite':
-            source=baseline[key]
+            # Lists were already adjusted on the original by earlier add/remove
+            # steps: from here on the original carries the target lists.
+            source={**baseline[key],'groups':edited[key]['groups']}
             existing_id=str(op['existing_id'])
             # Read everything again immediately before the first mutation.
             # Never trust only the SQLite planning snapshot for an adoption.
@@ -744,7 +788,7 @@ def apply_operations(client,operations,edited,baseline):
                 raise LocalizedError('error.reuse.original_changed')
             imported_copy_groups={g for g in GROUPS if baseline[tuple(op['other_key'])]['groups'][g]}
             if (set(copy.get('favoriteGroup') or []) != imported_copy_groups
-                    or 'A' in imported_copy_groups):
+                    or imported_copy_groups & _copy_groups(source)):
                 raise LocalizedError('error.reuse.copy_changed')
             if sum(str(c.get('channelNumber'))==str(op['to'])
                    for c in flatten_live(before)) != 1:
@@ -753,32 +797,39 @@ def apply_operations(client,operations,edited,baseline):
             aliases[existing_id]=key
             current_identity[key]={**source,'db_id':existing_id,'number':op['to']}
             copy_outcomes[key]='copy'
-            copy_final_groups[key]=imported_copy_groups | {'A'}
+            copy_final_groups[key]=imported_copy_groups | _copy_groups(source)
             results.append({'kind':'reuse_copy_favorite','channel':source['name'],
                             'observedOperation':'reuse','originalId':str(source['db_id']),
                             'newId':existing_id,'from':op['from'],'to':op['to'],
-                            'groupsTransferred':['A'],'apiReturnValue':None})
+                            'groupsTransferred':sorted(_copy_groups(source)),'apiReturnValue':None})
         elif kind=='copy_favorite':
-            source=baseline[key]
+            source={**baseline[key],'groups':edited[key]['groups']}
             before=live_channels(client)
             original=match_live(source,before,op['from'])
             if str(original.get('channelId'))!=str(source['db_id']):
                 raise LocalizedError('error.copy.original_id_changed')
             if any(str(c.get('channelNumber'))==str(op['to']) for c in flatten_live(before)):
                 raise LocalizedError('error.copy.target_not_free', number=op['to'])
+            # Other entries sharing the old number (e.g. several on 101) must
+            # stay untouched, exactly as for a native number change.
+            untouched_peers = _peer_state([c for c in flatten_live(before)
+                                           if str(c.get('channelNumber'))==str(op['from'])],
+                                          original.get('channelId'))
             ret=luna(client,'changeChannelNumber',
                      {'channelId':original['channelId'],'channelNumber':int(op['to'])},
                      service=NUMBER_SERVICE)
             if ret.get('returnValue') is False:
                 raise LocalizedError('error.copy.rejected', code=str(ret.get('errorCode')), text=str(ret.get('errorText')))
-            _, old, copied, outcome = _wait_for_copy(client,source,op['from'],op['to'])
+            after, old, copied, outcome = _wait_for_copy(client,source,op['from'],op['to'])
+            _check_peers_unchanged(untouched_peers, after)
             copied_id=str(copied['channelId'])
             if old is not None and copied_id==str(old['channelId']):
                 raise LocalizedError('error.copy.no_own_id')
             if outcome=='copy':
-                # Before any further numbering, migrate ONLY favorite A.
+                # Before any further numbering, migrate the channel's lists.
                 # If this stops midway, no further channel number writes follow.
                 _migrate_copy_favorites(client,source,copied_id,str(old['channelId']))
+                copy_final_groups[key]=_copy_groups(source)
             aliases[copied_id]=key
             current_identity[key]={**source,'db_id':copied_id,'number':op['to']}
             copy_outcomes[key]=outcome
@@ -786,7 +837,7 @@ def apply_operations(client,operations,edited,baseline):
                             'observedOperation':outcome,
                             'originalId':str(source['db_id']),'newId':copied_id,
                             'from':op['from'],'to':op['to'],
-                            'groupsTransferred':['A'] if outcome=='copy' else [],
+                            'groupsTransferred':sorted(_copy_groups(source)) if outcome=='copy' else [],
                             'apiReturnValue':ret.get('returnValue')})
         elif kind=='swap':
             other_key=tuple(op['other_key'])
@@ -865,9 +916,7 @@ def apply_operations(client,operations,edited,baseline):
             if (len(matches)!=1 or (len(from_holders)!=1 and int(op['from'])<=99)
                     or to_holders):
                 raise LocalizedError('error.number.source_or_target_unclear', number=op['to'])
-            untouched_peers = {str(c.get('channelId')): (str(c.get('channelNumber')),
-                              tuple(sorted(c.get('favoriteGroup') or [])))
-                              for c in from_holders if str(c.get('channelId'))!=str(item.get('channelId'))}
+            untouched_peers = _peer_state(from_holders, item.get('channelId'))
             ret=luna(client,'changeChannelNumber',{'channelId':item['channelId'],'channelNumber':int(op['to'])},service=NUMBER_SERVICE)
             if ret.get('returnValue') is False:
                 code=str(ret.get('errorCode')) if ret.get('errorCode') else Message('diag.no_error_code')
@@ -883,14 +932,10 @@ def apply_operations(client,operations,edited,baseline):
                                      response=str(ret), cause=exc) from exc
             if str(new.get('channelNumber'))!=op['to']:
                 raise LocalizedError('error.number.unconfirmed', response=str(ret))
-            after_by_id = {str(c.get('channelId')):c for c in flatten_live(after)}
-            for peer_id,(previous_number,previous_groups) in untouched_peers.items():
-                peer = after_by_id.get(peer_id)
-                if (peer is None or str(peer.get('channelNumber'))!=previous_number
-                        or tuple(sorted(peer.get('favoriteGroup') or []))!=previous_groups):
-                    raise LocalizedError('error.number.peer_changed')
+            _check_peers_unchanged(untouched_peers, after)
             _remember_live_identity(aliases,current_identity,baseline,key,new,op['to'])
             results.append({'kind':'number','channel':key[0],'apiReturnValue':ret.get('returnValue')})
+    if progress is not None: progress(len(operations),None)
     # A chain may have touched a participant multiple times. Recheck the
     # complete desired numbering in one final live snapshot before success.
     moved_keys = {tuple(op['key']) for op in operations if op['kind'] in ('number','swap','copy_favorite','reuse_copy_favorite')}
@@ -906,12 +951,12 @@ def apply_operations(client,operations,edited,baseline):
                 raise LocalizedError('error.final.slot_not_unique', number=expected)
             members=set(actual.get('favoriteGroup') or [])
             if copy_outcomes.get(key)=='copy':
-                if members != copy_final_groups.get(key, {'A'}):
+                if members != copy_final_groups.get(key, _copy_groups(edited[key])):
                     raise LocalizedError('error.final.copy_groups_changed')
                 original=_channel_by_id(final,baseline[key]['db_id'])
                 if str(original.get('channelNumber'))!=str(baseline[key]['number']):
                     raise LocalizedError('error.final.original_number_changed')
-                unchanged_groups={g for g in GROUPS if baseline[key]['groups'][g] and g!='A'}
+                unchanged_groups=_copy_groups(edited[key])-copy_final_groups.get(key, _copy_groups(edited[key]))
                 if set(original.get('favoriteGroup') or [])!=unchanged_groups:
                     raise LocalizedError('error.final.original_groups_changed')
             elif any((g in members)!=edited[key]['groups'][g] for g in GROUPS):

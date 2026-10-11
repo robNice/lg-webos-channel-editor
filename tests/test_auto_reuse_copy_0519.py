@@ -97,7 +97,8 @@ class AutomaticCopyReuseTest(ExistingCopyTest):
         ops,_,_=tv_write.make_plan(self.work,self.base,sim.live(None))
         self.assertEqual([op['kind'] for op in ops], ['reuse_copy_favorite','copy_favorite','order'])
 
-    def test_other_group_does_not_automatically_adopt(self):
+    def test_other_group_adopts_copy_too(self):
+        # v0.6.0: copy migration covers every list, so renumbering B keeps the copy.
         self._add_copy()
         for path in (self.base,self.work):
             with sqlite3.connect(path) as db:
@@ -106,7 +107,7 @@ class AutomaticCopyReuseTest(ExistingCopyTest):
             db.execute('UPDATE tuner_on SET chan_no="125",chan_no_int=125 WHERE dvc_chan_id=?',(A,))
             db.row_factory=sqlite3.Row
             plan=app.renumber_plan(db,'B',26)
-        self.assertEqual(plan['displaced'],1)
-        self.assertTrue(any(c['id']==A26 for c in plan['changes']))
+        self.assertEqual(plan['displaced'],0)
+        self.assertFalse(any(c['id']==A26 for c in plan['changes']))
 
 if __name__=='__main__': unittest.main()

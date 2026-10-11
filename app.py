@@ -17,6 +17,10 @@ from version import APP_VERSION
 from tv_compare import ChannelStateComparison
 from i18n import I18N, Joined, LocalizedError, Message
 from reception import ReceptionMode
+from tv_job import TvWriteJob, TvWriteJobs
+from tv_inventory import TvGroupReload, TvInventorySync
+from tv_login import TvLoginCheck
+from tv_groups import GroupNameSync, TV_CHANNEL_DB
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -86,7 +90,6 @@ def import_db(path):
 
 
 
-TV_CHANNEL_DB = '/mnt/lg/cmn_data/iepg/db/channel.sql'
 
 
 def import_from_tv(host, password, port=22, ssh_client_factory=None):
@@ -224,33 +227,68 @@ def connect_tv(host, password, port=22):
     return client
 
 
+def tv_snapshot_with_new_channels(host,password,port=22):
+    """Fresh TV backup; channels the TV added by itself are taken over."""
+    check=tv_sync_preflight(host,password,port)
+    adopted=TvInventorySync(DB,Path(check['backedUp']),DATA/'before-tv-adopt.sqlite').adopt()
+    return Path(check['backedUp']),adopted
+
+
+def reload_tv_channels(host,password,port=22):
+    with LOCK:
+        _,adopted=tv_snapshot_with_new_channels(host,password,port)
+        return {'ok':True,'adoptedChannels':adopted}
+
+
+def reload_tv_group(host,password,group,confirm=False,port=22):
+    """Replace one favorite list by the TV version; a differing local list
+    is only replaced after explicit confirmation."""
+    if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
+    with LOCK:
+        snapshot,adopted=tv_snapshot_with_new_channels(host,password,port)
+        reload=TvGroupReload(DB,snapshot,DATA/'before-group-reload.sqlite')
+        difference=reload.difference(group)
+        if difference and not confirm:
+            return {'needsConfirm':True,'group':group,'adoptedChannels':adopted,**difference}
+        if difference:
+            reload.apply(group)
+        return {'ok':True,'changed':bool(difference),'adoptedChannels':adopted}
+
+
+def preview_operation(o,baseline):
+    """One planned TV operation as shown in the preview and the progress dialog."""
+    return {'type':o['kind'],'group':o.get('group'),
+            'channel':o.get('key',[None])[0] if o.get('key') else '',
+            'count':len(o.get('keys',[])) if o['kind']=='order' else 1,
+            'from':o.get('from'),'to':o.get('to'),
+            'otherChannel':baseline[o['other_key']]['name'] if o.get('other_key') else None,
+            'existingGroups':o.get('existing_groups', []),
+            'warning':o.get('warning')}
+
+
 def prepare_tv_write(host,password,port=22):
     with LOCK:
-        check=tv_sync_preflight(host,password,port)
+        # Channels the TV added by itself since the import (automatic channel
+        # update while zapping) are taken over before planning.
+        snapshot,adopted=tv_snapshot_with_new_channels(host,password,port)
+        renames=GroupNameSync.plan(DB,snapshot)
         client=connect_tv(host,password,port)
         try:
             live=tv_write.live_channels(client)
-            operations,edited,baseline=tv_write.make_plan(DB,Path(check['backedUp']),live)
+            operations,edited,baseline=tv_write.make_plan(DB,snapshot,live)
         finally: client.close()
         token=uuid.uuid4().hex
         SYNC_PLANS.clear()
         SYNC_PLANS[token]={'host':host,'port':port,'time':time.time(),
-                           'workhash':tv_write.signature(DB),'backup':check['backedUp'],
-                           'operations':operations}
-        preview=[]
-        for o in operations:
-            preview.append({'type':o['kind'],'group':o.get('group'),
-                            'channel':o.get('key',[None])[0] if o.get('key') else '',
-                            'count':len(o.get('keys',[])) if o['kind']=='order' else 1,
-                            'from':o.get('from'),'to':o.get('to'),
-                            'otherChannel':baseline[o['other_key']]['name'] if o.get('other_key') else None,
-                            'existingGroups':o.get('existing_groups', []),
-                            'warning':o.get('warning')})
-        return {'token':token,'backup':check['backedUp'],'operations':preview,
-                'total':len(operations), 'warning':Message('sync.write_warning')}
+                           'workhash':tv_write.signature(DB),'backup':str(snapshot),
+                           'operations':operations,'renames':renames}
+        preview=[preview_operation(o,baseline) for o in renames+operations]
+        return {'token':token,'backup':str(snapshot),'operations':preview,
+                'total':len(renames)+len(operations), 'warning':Message('sync.write_warning'),
+                'adoptedChannels':adopted}
 
 
-def commit_tv_write(host,password,port,token):
+def commit_tv_write(host,password,port,token,progress=None):
     with LOCK:
         plan=SYNC_PLANS.pop(token,None)
         if not plan or time.time()-plan['time']>600 or (host,port)!=(plan['host'],plan['port']):
@@ -263,13 +301,32 @@ def commit_tv_write(host,password,port,token):
         try:
             live=tv_write.live_channels(client)
             ops, edited, baseline=tv_write.make_plan(DB,Path(second['backedUp']),live)
-            if ops != plan['operations']:
+            renames=GroupNameSync.plan(DB,Path(second['backedUp']))
+            if ops != plan['operations'] or renames != plan['renames']:
                 raise LocalizedError('error.sync.tv_changed')
-            results=tv_write.apply_operations(client,ops,edited,baseline)
+            # List names first: independent of channel IDs, a failure stops
+            # before any channel is touched.
+            total=len(renames)+len(ops)
+            def step(offset):
+                return None if progress is None else (
+                    lambda index,op: progress(offset+index,total,None if op is None else preview_operation(op,baseline)))
+            results=GroupNameSync().apply(client,renames,progress=step(0))
+            results+=tv_write.apply_operations(client,ops,edited,baseline,progress=step(len(renames)))
             return {'ok':True,'backup':second['backedUp'],'operations':results,'count':len(results)}
         except Exception as exc:
             raise LocalizedError('error.sync.stopped', backup=second['backedUp'], cause=exc) from exc
         finally: client.close()
+
+
+TV_JOBS = TvWriteJobs()
+
+
+def start_tv_write(host,password,port,token):
+    """Run commit_tv_write in the background; afterwards re-import the TV state
+    with the same credentials, which are kept only for the job's lifetime."""
+    return TV_JOBS.start(TvWriteJob(
+        lambda progress: commit_tv_write(host,password,port,token,progress=progress),
+        lambda: import_from_tv(host,password,port)))
 
 
 def read_groups(conn):
@@ -476,48 +533,45 @@ def renumber_plan(conn, group, start=1):
     if not selected_ids.issubset(by_id): raise LocalizedError('error.renumber.favorites_missing')
     outsider = [r for cid,r in by_id.items() if cid not in selected_ids]
     # LG may have left an extra, non-favorite copy during an earlier partial
-    # synchronization.  If an Astra-LCN favorite originally above 99 is to
-    # occupy exactly that copy's existing position, DON'T relocate that copy
-    # as a foreign station: the write-back planner can adopt its real ID and
-    # transfer favorite A without a new numbering call.  Compare DVB IDs,
-    # never station names or just target numbers. This applies only to A,
-    # because the copy-migration writer currently implements group A only.
+    # synchronization.  If a favorite originally above 99 is to occupy
+    # exactly that copy's existing position, DON'T relocate that copy as a
+    # foreign station: the write-back planner can adopt its real ID and
+    # transfer the favorite lists without a new numbering call.  Compare DVB
+    # IDs, never station names or just target numbers.
+    # v0.6.0: the copy-migration writer moves ALL lists, so this applies to
+    # every list. The LCN flag may sit on the copy instead of the original
+    # (HGTV HD), so it is not required here: adoption calls no renumbering.
     retained_copy_ids = set()
-    if group == 'A' and mode == 'Satellite':
-        cols = {r[1] for r in conn.execute('PRAGMA table_info(tuner_on)')}
-        if 'satelliteLcn_flag' in cols:
-            lcn_flags = {r[0]: r[1] for r in conn.execute(
-                'SELECT dvc_chan_id, satelliteLcn_flag FROM tuner_on')}
-            channel_by_id = {c['id']: c for c in channels}
-            for offset, station in enumerate(selected):
-                original_id = station['id']
-                old_number = by_id[original_id]['chan_no_int']
-                if (old_number is None or int(old_number) <= 99
-                        or lcn_flags.get(original_id) != 1):
-                    continue
-                target_number = start + offset
-                if not 1 <= target_number <= 99:
-                    continue
-                identity = tv_write._technical_id(original_id)
-                if identity is None:
-                    continue
-                target_occupants = [r for r in outsider
-                                    if r['chan_no_int'] is not None
-                                    and int(r['chan_no_int']) == target_number]
-                same_dvb = [r for r in target_occupants
-                            if tv_write._technical_id(r['dvc_chan_id']) == identity]
-                if not same_dvb:
-                    continue
-                if len(same_dvb) != 1 or len(target_occupants) != 1:
-                    raise LocalizedError('error.renumber.copy_target_ambiguous', number=target_number)
-                existing_id = same_dvb[0]['dvc_chan_id']
-                existing = channel_by_id.get(existing_id)
-                # The copy may already belong to B-H. This is NOT a conflict:
-                # adopting it for A must preserve all other memberships.  A
-                # itself would mean a separate, currently selected favorite.
-                if existing is None or existing['favorites']['A']:
-                    raise LocalizedError('error.renumber.copy_already_in_a', number=target_number)
-                retained_copy_ids.add(existing_id)
+    if mode == 'Satellite':
+        channel_by_id = {c['id']: c for c in channels}
+        for offset, station in enumerate(selected):
+            original_id = station['id']
+            old_number = by_id[original_id]['chan_no_int']
+            if old_number is None or int(old_number) <= 99:
+                continue
+            target_number = start + offset
+            if not 1 <= target_number <= 99:
+                continue
+            identity = tv_write._technical_id(original_id)
+            if identity is None:
+                continue
+            target_occupants = [r for r in outsider
+                                if r['chan_no_int'] is not None
+                                and int(r['chan_no_int']) == target_number]
+            same_dvb = [r for r in target_occupants
+                        if tv_write._technical_id(r['dvc_chan_id']) == identity]
+            if not same_dvb:
+                continue
+            if len(same_dvb) != 1 or len(target_occupants) != 1:
+                raise LocalizedError('error.renumber.copy_target_ambiguous', number=target_number)
+            existing_id = same_dvb[0]['dvc_chan_id']
+            existing = channel_by_id.get(existing_id)
+            # The copy may already belong to B-H. This is NOT a conflict:
+            # adopting it for A must preserve all other memberships.  A
+            # itself would mean a separate, currently selected favorite.
+            if existing is None or existing['favorites'][group]:
+                raise LocalizedError('error.renumber.copy_already_in_list', number=target_number, group=group)
+            retained_copy_ids.add(existing_id)
     occupied = {int(r['chan_no_int']) for r in by_id.values() if r['chan_no_int'] is not None}
     # An outsider displaced from the desired favorite block may use either an
     # already empty slot OR a <=99 slot a favorite will vacate outside that
@@ -545,10 +599,24 @@ def renumber_plan(conn, group, start=1):
         old = int(by_id[c['id']]['chan_no_int'])
         new = start+i
         if old != new: changes.append({'id':c['id'],'name':c['name'],'old':old,'new':new,'displaced':False})
+    # Numbers are global: a displaced channel keeps its place in its OTHER
+    # favorite lists, but with a new number. Report those and suggest the
+    # lowest start whose block holds no favorite of another list.
+    lists_of = {c['id']: [g for g in GROUPS if c['favorites'][g]] for c in channels}
+    displaced_favorites = [{'name':c['name'],'old':c['old'],'new':c['new'],'groups':lists_of[c['id']]}
+                           for c in changes if c['displaced'] and lists_of.get(c['id'])]
+    suggested_start = None
+    if displaced_favorites:
+        blocked = {int(r['chan_no_int']) for cid,r in by_id.items()
+                   if cid not in selected_ids and cid not in retained_copy_ids
+                   and r['chan_no_int'] is not None and lists_of.get(cid)}
+        count = len(selected)
+        suggested_start = next((s for s in range(1, 100-count+1) if not blocked & set(range(s, s+count))), None)
     plan = {'group':group,'start':start,'mode':mode,'favorites':len(selected),
             'originalFavorites':original_favorites, 'mergedFavorites':merged,
             'finalFavoriteIds':[c['id'] for c in selected],
-            'displaced':sum(c['displaced'] for c in changes), 'changes':changes}
+            'displaced':sum(c['displaced'] for c in changes), 'changes':changes,
+            'displacedFavorites':displaced_favorites, 'suggestedStart':suggested_start}
     validate_number_limits(conn, plan)
     return plan
 
@@ -769,6 +837,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_bytes((BASE / 'static' / name).read_bytes(), kind)
         if parsed.path == '/site.webmanifest':
             return self.send_bytes(MANIFEST.render(self.lang), 'application/manifest+json')
+        if parsed.path == '/api/tv-write-status':
+            # No LOCK: the running job holds it for the whole transfer.
+            job_id = parse_qs(parsed.query).get('job', [None])[0]
+            job = TV_JOBS.get(job_id) if job_id else TV_JOBS.latest()
+            if job is None:
+                return self.fail(LocalizedError('error.sync.job_unknown'), 404) if job_id else self.reply({'state': 'none'})
+            return self.reply(job.status())
         if parsed.path == '/api/status':
             with LOCK:
                 if not DB.exists(): return self.reply({'loaded': False})
@@ -829,6 +904,10 @@ class Handler(BaseHTTPRequestHandler):
         from email.policy import default
         length = int(self.headers.get('Content-Length', '0'))
         if not 0 < length <= MAX_UPLOAD: return self.fail(LocalizedError('error.http.request_size'), 413)
+        # While a TV write runs, only its cancellation is accepted: no edits,
+        # imports or second transfers that could interfere with it.
+        if TV_JOBS.busy() and self.path != '/api/tv-write-cancel':
+            return self.fail(LocalizedError('error.sync.busy'), 409)
         try:
             if self.path == '/api/import':
                 ctype = self.headers.get('Content-Type', '')
@@ -851,8 +930,22 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if self.path == '/api/tv-write-preview':
                 return self.reply(prepare_tv_write(data.get('host'),data.get('password'),data.get('port',22)))
+            if self.path == '/api/tv-write-cancel':
+                job = TV_JOBS.get(str(data.get('job')))
+                if job is None: return self.fail(LocalizedError('error.sync.job_unknown'), 404)
+                return self.reply(job.cancel())
             if self.path == '/api/tv-write-commit':
-                return self.reply(commit_tv_write(data.get('host'),data.get('password'),data.get('port',22),data.get('token')))
+                job = start_tv_write(data.get('host'),data.get('password'),data.get('port',22),data.get('token'))
+                return self.reply({'job': job.id}, 202)
+            if self.path == '/api/tv-login':
+                # Late lookup of connect_tv keeps it replaceable in tests.
+                login = TvLoginCheck(lambda host, password, port: connect_tv(host, password, port))
+                return self.reply(login.check(data.get('host'), data.get('password'), data.get('port', 22)))
+            if self.path == '/api/tv-reload-channels':
+                return self.reply(reload_tv_channels(data.get('host'), data.get('password'), data.get('port', 22)))
+            if self.path == '/api/tv-reload-group':
+                return self.reply(reload_tv_group(data.get('host'), data.get('password'), str(data.get('group')),
+                                                  data.get('confirm') is True, data.get('port', 22)))
             if self.path == '/api/tv-sync-preflight':
                 return self.reply(tv_sync_preflight(data.get('host'), data.get('password'), data.get('port', 22)))
             if self.path == '/api/import-tv':

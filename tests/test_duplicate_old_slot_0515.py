@@ -1,4 +1,8 @@
-"""Regression: NDR source number 101 may occur several times in LG global list."""
+"""Regression: NDR source number 101 may occur several times in LG global list.
+
+v0.6.0: changes from above 99 into 1..99 always take the copy path (LG copied
+in every observed case), which applies to favorite-A members; the simulated TV
+here moves, which the copy path accepts as observed move."""
 import sqlite3
 import tempfile
 import unittest
@@ -31,6 +35,12 @@ class DuplicateSource101(unittest.TestCase):
                                (OTHER,'101',101,'Other',SAT,'Satellite'),
                                (EXTRA,'101',101,'NDR',SAT,'Satellite')])
 
+    def favorite_a(self, *ids):
+        for path in (self.base,self.work):
+            with sqlite3.connect(path) as c:
+                for index,cid in enumerate(ids):
+                    c.execute('UPDATE tuner_on SET fav_chan_gr_a="1",favoriteIdxA=? WHERE dvc_chan_id=?',(index,cid))
+
     def edit(self, changes):
         with sqlite3.connect(self.work) as c:
             for cid,number in changes.items():
@@ -38,10 +48,11 @@ class DuplicateSource101(unittest.TestCase):
                           (str(number),number,cid))
 
     def test_move_from_duplicated_101_to_free_slot(self):
+        self.favorite_a(NDR)
         self.edit({NDR:1})
-        sim=SimTV([(NDR,'NDR',101,[]),(OTHER,'Other',101,[]),(EXTRA,'NDR',101,[])])
+        sim=SimTV([(NDR,'NDR',101,['A']),(OTHER,'Other',101,[]),(EXTRA,'NDR',101,[])])
         ops,edited,baseline=tv_write.make_plan(self.work,self.base,sim.live(None))
-        self.assertEqual([(o['kind'],o['from'],o['to']) for o in ops],[('number','101','1')])
+        self.assertEqual([(o['kind'],o['from'],o['to']) for o in ops if o['kind']!='order'],[('copy_favorite','101','1')])
         with patch.object(tv_write,'live_channels',sim.live),patch.object(tv_write,'luna',sim.luna):
             tv_write.apply_operations(None,ops,edited,baseline)
         self.assertEqual(len(sim.calls),1)
@@ -72,10 +83,11 @@ class DuplicateSource101(unittest.TestCase):
         self.assertEqual([c['channelNumber'] for c in sim.items],['1','101','101'])
 
     def test_two_channels_same_101_can_move_independently(self):
+        self.favorite_a(NDR,OTHER)
         self.edit({NDR:1,OTHER:2})
-        sim=SimTV([(NDR,'NDR',101,[]),(OTHER,'Other',101,[]),(EXTRA,'NDR',101,[])])
+        sim=SimTV([(NDR,'NDR',101,['A']),(OTHER,'Other',101,['A']),(EXTRA,'NDR',101,[])])
         ops,edited,baseline=tv_write.make_plan(self.work,self.base,sim.live(None))
-        self.assertEqual(len(ops),2)
+        self.assertEqual(len([o for o in ops if o['kind']!='order']),2)
         with patch.object(tv_write,'live_channels',sim.live),patch.object(tv_write,'luna',sim.luna):
             tv_write.apply_operations(None,ops,edited,baseline)
         self.assertEqual([(x['channelName'],x['channelNumber']) for x in sim.items],
@@ -87,12 +99,13 @@ class DuplicateSource101(unittest.TestCase):
                 c.execute('INSERT INTO tuner_on(dvc_chan_id,chan_no,chan_no_int,chan_std_name,'
                           'sat_name,chan_mode_name) VALUES(?,?,?,?,?,?)',
                           (FREE,'1',1,'Moved away',SAT,'Satellite'))
+        self.favorite_a(NDR)
         self.edit({NDR:1,FREE:2})
-        sim=SimTV([(NDR,'NDR',101,[]),(OTHER,'Other',101,[]),
+        sim=SimTV([(NDR,'NDR',101,['A']),(OTHER,'Other',101,[]),
                    (EXTRA,'NDR',101,[]),(FREE,'Moved away',1,[])])
         ops,edited,baseline=tv_write.make_plan(self.work,self.base,sim.live(None))
-        self.assertEqual([(o['kind'],o['from'],o['to']) for o in ops],
-                         [('number','1','2'),('number','101','1')])
+        self.assertEqual([(o['kind'],o['from'],o['to']) for o in ops if o['kind']!='order'],
+                         [('number','1','2'),('copy_favorite','101','1')])
         with patch.object(tv_write,'live_channels',sim.live),patch.object(tv_write,'luna',sim.luna):
             tv_write.apply_operations(None,ops,edited,baseline)
         self.assertEqual([(x['channelName'],x['channelNumber']) for x in sim.items],
@@ -104,8 +117,9 @@ class DuplicateSource101(unittest.TestCase):
                 c.execute('INSERT INTO tuner_on(dvc_chan_id,chan_no,chan_no_int,chan_std_name,'
                           'sat_name,chan_mode_name) VALUES(?,?,?,?,?,?)',
                           (FREE,'1',1,'Busy',SAT,'Satellite'))
+        self.favorite_a(NDR)
         self.edit({NDR:1})
-        sim=SimTV([(NDR,'NDR',101,[]),(OTHER,'Other',101,[]),
+        sim=SimTV([(NDR,'NDR',101,['A']),(OTHER,'Other',101,[]),
                    (EXTRA,'NDR',101,[]),(FREE,'Busy',1,[])])
         with assert_raises_message(self, 'error.plan.target_occupied_by_unchanged'):
             tv_write.make_plan(self.work,self.base,sim.live(None))
@@ -122,8 +136,9 @@ class DuplicateSource101(unittest.TestCase):
             tv_write.make_plan(self.work,self.base,sim.live(None))
 
     def test_abort_if_peer_on_original_101_changes_unexpectedly(self):
+        self.favorite_a(NDR)
         self.edit({NDR:1})
-        sim=SimTV([(NDR,'NDR',101,[]),(OTHER,'Other',101,[]),(EXTRA,'NDR',101,[])])
+        sim=SimTV([(NDR,'NDR',101,['A']),(OTHER,'Other',101,[]),(EXTRA,'NDR',101,[])])
         ops,edited,baseline=tv_write.make_plan(self.work,self.base,sim.live(None))
         orig=sim.luna
         def mutate(client,method,payload,service=None):
@@ -133,5 +148,17 @@ class DuplicateSource101(unittest.TestCase):
         with patch.object(tv_write,'live_channels',sim.live),patch.object(tv_write,'luna',mutate):
             with assert_raises_message(self, 'error.number.peer_changed'):
                 tv_write.apply_operations(None,ops,edited,baseline)
+
+
+class NonFavoriteAbove99(DuplicateSource101):
+    """v0.6.0: a channel in no list is copied from above 99 with a preview warning."""
+    def test_non_favorite_from_101_is_copied_with_warning(self):
+        self.edit({NDR:1})
+        sim=SimTV([(NDR,'NDR',101,[]),(OTHER,'Other',101,[]),(EXTRA,'NDR',101,[])])
+        ops,_,_=tv_write.make_plan(self.work,self.base,sim.live(None))
+        self.assertEqual([(o['kind'],o['warning'].key) for o in ops],[('copy_favorite','tv.write.copy_without_lists')])
+
+for _name in [n for n in dir(DuplicateSource101) if n.startswith('test_')]:
+    setattr(NonFavoriteAbove99,_name,None)
 
 if __name__=='__main__':unittest.main()

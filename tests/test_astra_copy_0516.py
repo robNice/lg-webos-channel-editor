@@ -39,15 +39,28 @@ class AstraCopyTests(unittest.TestCase):
         self.assertEqual(ops[0]['to'],'26')
         self.assertTrue(edited[ops[0]['key']]['groups']['A'])
 
-    def test_non_lcn_high_source_remains_supported(self):
-        # 4mediathek moved from 1849 to 4096 in a previous real test;
-        # the explicit copy-safety gate is restricted to satelliteLcn_flag=1.
+    def test_non_lcn_high_source_follows_copy_rules(self):
+        # v0.6.0: on the real TV every >99 -> 1..99 change was a copy, also
+        # without satelliteLcn_flag (HGTV HD). The copy path no longer depends
+        # on the flag; it accepts an observed move as well. 4mediathek moving
+        # 1849 -> 4096 (both >99) remains a plain number change.
         with sqlite3.connect(self.edit) as c:
             c.execute('UPDATE tuner_on SET chan_no="26",chan_no_int=26 WHERE dvc_chan_id=?', (FOURMEDIA,))
         live={("4mediathek",SAT,'Satellite'):[{
             'channelId':FOURMEDIA,'channelNumber':'4096','favoriteGroup':[]}]}
+        # In no list: a copy is planned with a warning (v0.6.0, all-lists rule).
         ops,_,_=tv_write.make_plan(self.edit,self.base,live)
-        self.assertTrue(any(o['kind']=='number' and o['from']=='4096' and o['to']=='26' for o in ops))
+        self.assertEqual([o['kind'] for o in ops],['copy_favorite'])
+        self.assertEqual(ops[0]['warning'].key,'tv.write.copy_without_lists')
+        for path in (self.base,self.edit):
+            with sqlite3.connect(path) as c:
+                c.execute('UPDATE tuner_on SET fav_chan_gr_a="1",favoriteIdxA=1 WHERE dvc_chan_id=?', (FOURMEDIA,))
+        live[("4mediathek",SAT,'Satellite')][0]['favoriteGroup']=['A']
+        live[("4mediathek",SAT,'Satellite')][0]['favoriteIdxA']=1
+        live[('ARD-alpha HD',SAT,'Satellite')]=[{'channelId':SOURCE,'channelNumber':'125',
+            'favoriteGroup':['A'],'favoriteIdxA':0}]
+        ops,_,_=tv_write.make_plan(self.edit,self.base,live)
+        self.assertEqual([(o['kind'],o['from'],o['to']) for o in ops if o['kind']!='order'],[('copy_favorite','4096','26')])
 
     def test_a_copy_is_not_a_verified_move_even_when_new_id_is_visible(self):
         original={'channelId':SOURCE,'channelNumber':'125','channelName':'ARD-alpha HD',

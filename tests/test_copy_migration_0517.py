@@ -129,7 +129,8 @@ class CopyMigrationTest(unittest.TestCase):
         self.assertIn('A',sim._idx(B)['favoriteGroup'])
         self.assertIn('A',sim._idx(B14)['favoriteGroup'])
 
-    def test_other_favorite_groups_stay_on_original(self):
+    def test_other_favorite_groups_follow_the_copy(self):
+        # v0.6.0 (user decision): ALL lists move to the copy; before, B stayed on the original.
         for path in (self.base,self.work):
             with sqlite3.connect(path) as c:
                 c.execute('UPDATE tuner_on SET fav_chan_gr_b="1",favoriteIdxB=0 WHERE dvc_chan_id=?',(A,))
@@ -138,16 +139,17 @@ class CopyMigrationTest(unittest.TestCase):
         sim=CopySim([(A,'ARD-alpha HD',125,['A','B']),
                      (B,'Pro7 MAXX HD',418,['A'])])
         ops,edited,base=tv_write.make_plan(self.work,self.base,sim.live(None))
-        self.assertEqual([o['kind'] for o in ops],['copy_favorite','order'])
+        self.assertEqual([(o['kind'],o.get('group')) for o in ops],[('copy_favorite',None),('order','A'),('order','B')])
         with patch.object(tv_write,'luna',sim.luna),patch.object(tv_write,'live_channels',sim.live):
             tv_write.apply_operations(None,ops,edited,base)
-        self.assertEqual(sim._idx(A)['favoriteGroup'],['B'])
-        self.assertEqual(sim._idx(A26)['favoriteGroup'],['A'])
-        self.assertEqual(sim.groups['B'],[A])
+        self.assertEqual(sim._idx(A)['favoriteGroup'],[])
+        self.assertEqual(sorted(sim._idx(A26)['favoriteGroup']),['A','B'])
+        self.assertEqual(sim.groups['B'],[A26])
         self.assertEqual([g for m,p in sim.calls if m=='releaseChannelFavoriteGroup'
-                          for g in p['favoriteGroup']],['A'])
+                          for g in p['favoriteGroup']],['A','B'])
 
-    def test_no_copy_without_favorite_A(self):
+    def test_copy_for_member_of_B_only(self):
+        # v0.6.0: no longer limited to favorite A.
         for path in (self.base,self.work):
             with sqlite3.connect(path) as c:
                 c.execute('UPDATE tuner_on SET fav_chan_gr_a="",fav_chan_gr_b="1" WHERE dvc_chan_id=?',(A,))
@@ -155,9 +157,12 @@ class CopyMigrationTest(unittest.TestCase):
             c.execute('UPDATE tuner_on SET chan_no="26",chan_no_int=26 WHERE dvc_chan_id=?',(A,))
         sim=CopySim([(A,'ARD-alpha HD',125,['B']),
                      (B,'Pro7 MAXX HD',418,['A'])])
-        with assert_raises_message(self, 'error.plan.copy_only_group_a'):
-            tv_write.make_plan(self.work,self.base,sim.live(None))
-        self.assertEqual(sim.calls,[])
+        ops,edited,base=tv_write.make_plan(self.work,self.base,sim.live(None))
+        self.assertEqual([(o['kind'],o.get('group')) for o in ops],[('copy_favorite',None),('order','B')])
+        with patch.object(tv_write,'luna',sim.luna),patch.object(tv_write,'live_channels',sim.live):
+            tv_write.apply_operations(None,ops,edited,base)
+        self.assertEqual(sim._idx(A26)['favoriteGroup'],['B'])
+        self.assertEqual(sim._idx(A)['favoriteGroup'],[])
 
     def test_rejected_group_copy_stops_before_later_number_operations(self):
         with sqlite3.connect(self.work) as c:

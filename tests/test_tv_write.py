@@ -42,8 +42,20 @@ class SatelliteRadioTests(unittest.TestCase):
   res=m.live_channels(client)
   self.assertIn(('hr1','ASTRA 19.2E','Satellite'),res)
   self.assertNotIn('Satellite Digital TV',client.cmd)
- def test_channel_number_uses_legacy_service(self):
-  self.assertEqual(m.NUMBER_SERVICE,'com.webos.service.legacybroadcast.channel')
+ def test_channel_number_uses_iepg_service(self):
+  # v0.6.0: like LG's own channel editor app. Confirmed on the TV (HGTV HD
+  # 53->99 move and 99<->54 swap): same results, but the TV no longer tunes
+  # to the renumbered channel as with legacybroadcast.channel.
+  self.assertEqual(m.NUMBER_SERVICE,'com.webos.service.iepg')
+  commands=[]
+  class Out:
+   channel=type('C',(),{'recv_exit_status':lambda s:0})()
+   def read(self,*a):return b'{"returnValue":true}'
+  class Client:
+   def exec_command(self,cmd,timeout=None):
+    commands.append(cmd);return None,Out(),Out()
+  m.luna(Client(),'changeChannelNumber',{'channelId':'x','channelNumber':5},service=m.NUMBER_SERVICE)
+  self.assertIn('luna://com.webos.service.iepg/changeChannelNumber',commands[0])
 
 class CollisionSafetyTests(unittest.TestCase):
  def test_same_name_separate_numbers(self):
