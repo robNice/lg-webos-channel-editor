@@ -4,7 +4,7 @@
 
 [English](README.md) · **Deutsch**
 
-**Aktuelle Version: v0.6.4.** Zuletzt vollständig am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). Mit v0.6.0 wurden Neunummerierungen (Verschieben und Tauschen, ohne dass der TV umschaltet) und das Umbenennen einer Liste am TV bestätigt; Kopien mit Listenübernahme sind dort noch nicht erprobt. v0.6.1 bündelt Export und Import in je einem Dialog; ein Import stellt ein Backup auf der aktuellen Arbeitskopie wieder her. v0.6.2 ergänzt ein Feld für den SSH-Port im TV-Login; v0.6.3 nutzt diesen Port auch bei der Übertragung; v0.6.4 nimmt die LG Channels (IP) in die Listen auf, überträgt Listen aller Empfangsarten (Satellit, Kabel, Antenne, IP) und bietet eine Sortierung für die Liste der übrigen Sender.
+**Aktuelle Version: v0.7.0.** Zuletzt vollständig am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). Mit v0.6.0 wurden Neunummerierungen (Verschieben und Tauschen, ohne dass der TV umschaltet) und das Umbenennen einer Liste am TV bestätigt; Kopien mit Listenübernahme sind dort noch nicht erprobt. v0.6.1 bündelt Export und Import in je einem Dialog; ein Import stellt ein Backup auf der aktuellen Arbeitskopie wieder her. v0.6.2 ergänzt ein Feld für den SSH-Port im TV-Login; v0.6.3 nutzt diesen Port auch bei der Übertragung; v0.6.4 nimmt die LG Channels (IP) in die Listen auf, überträgt Listen aller Empfangsarten (Satellit, Kabel, Antenne, IP) und bietet eine Sortierung für die Liste der übrigen Sender. v0.7.0 kopiert eine Favoritenliste in eine andere Liste und exportiert oder importiert einzelne Listen.
 
 Browserbasierte, **lokal auf dem Computer laufende** Verwaltung der LG-webOS-Sender- und Favoritenlisten. Die Anwendung importiert eine SQLite-Sicherung des LG-TV per Root-SSH oder aus einer Datei, bearbeitet eine lokale Arbeitskopie und kann ausgewählte Änderungen **nach TV-Backup, Live-Abgleich, Vorschau und ausdrücklicher Bestätigung über LG-Luna-APIs zurückübertragen**. Eine laufende LG-SQLite- oder LevelDB-Datei wird niemals direkt überschrieben.
 
@@ -45,7 +45,7 @@ Images werden in der GitHub Container Registry für `linux/amd64` und `linux/arm
 | Tag | Inhalt |
 | --- | --- |
 | `ghcr.io/robnice/lg-webos-channel-editor:latest` | neueste Release-Version |
-| `ghcr.io/robnice/lg-webos-channel-editor:0.6.4` | eine feste Release-Version |
+| `ghcr.io/robnice/lg-webos-channel-editor:0.7.0` | eine feste Release-Version |
 | `ghcr.io/robnice/lg-webos-channel-editor:dev` | aktueller Entwicklungsstand, nur zum Testen |
 
 Ein Beispiel zum Kopieren ist [`docs/docker-compose.example.yml`](docs/docker-compose.example.yml): Host-Port (linke Zahl, Standard `8765`) und Host-Verzeichnis für `/app/data` anpassen, dann `docker compose up -d` (oder in das Compose-Plugin von OpenMediaVault einfügen) und `http://<server>:8765` öffnen.
@@ -56,7 +56,7 @@ Ein Beispiel zum Kopieren ist [`docs/docker-compose.example.yml`](docs/docker-co
 
 Releases entstehen automatisch: Ein Tag `vX.Y.Z` auf `main` (muss zu `version.py` passen) baut nach erfolgreichen Tests `:X.Y.Z` und `:latest`; jeder Push auf `dev` baut `:dev`.
 
-## Aktueller Funktionsumfang (v0.6.4)
+## Aktueller Funktionsumfang (v0.7.0)
 
 | Funktion | Stand |
 | --- | --- |
@@ -77,6 +77,8 @@ Releases entstehen automatisch: Ein Tag `vX.Y.Z` auf `main` (muss zu `version.py
 | TV-Zustand vergleichen, sichern, Vorschau erstellen, Live-Schreiben bestätigen | Implementiert; Fortschrittsdialog (Schritt x von n), Abbruch zwischen den Schritten, danach automatischer Re-Import vom TV; bei Fehler Abbruch **ohne automatische Rückabwicklung** |
 | Favoritenlisten umbenennen | Implementiert; Übertragung mit „Auf TV übertragen“ über `setGroupName` (wie LGs eigene Senderbearbeitung), Prüfung in der TV-Datenbank; mit v0.6.0 an Liste H am TV bestätigt |
 | Arbeitskopie als SQLite, CSV oder JSON exportieren | Implementiert; ein **Export**-Button; für CSV/JSON ist der Inhalt wählbar (alle Sender oder nur Listensender, Listen A–H, Listennamen, Nummern, LG-Rohdaten); CSV mit Rohdaten ist ein ZIP (eine CSV pro Tabelle), JSON mit Rohdaten ein vollständiges Backup; SQLite ist immer vollständig |
+| Favoritenliste kopieren und in eine andere Liste einfügen | Implementiert; Buttons **Kopieren** und **Einfügen** unter den Listen: ausgewählte Liste kopieren, Zielliste auswählen, einfügen. Die Zielliste wird entweder **ersetzt** (genau die kopierten Sender in ihrer Reihenfolge) oder die kopierten Sender werden **angehängt** (ihre Sender und Reihenfolge bleiben, nur fehlende kommen ans Ende); optional wird der Listenname übernommen. Nummern und andere Listen bleiben unverändert; wirkt auf dem TV mit „Auf TV übertragen“ |
+| Einzelne Liste exportieren oder importieren | Implementiert; **Exportieren** unter den Listen exportiert nur die ausgewählte Liste (JSON oder CSV, wahlweise mit Listennamen und Nummern; keine weiteren Optionen); **Importieren** unter den Listen liest jede Export- oder Sicherungsdatei und übernimmt eine ihrer Listen (wählbar, z. B. Liste C der Datei in Liste A) in die ausgewählte Liste – ersetzen oder anhängen wie beim Einfügen, optional mit Listennamen. Sender werden wie beim Wiederherstellen eines Backups zugeordnet; nicht mehr vorhandene werden übersprungen und genannt |
 | Backup importieren (SQLite, CSV, JSON) | Implementiert; ein **Import**-Button, Format wird automatisch erkannt; du wählst, welche Listen, Listennamen und Programmnummern auf die aktuelle Arbeitskopie übernommen werden (oder ersetzt sie mit einer SQLite-Datei komplett) |
 | Favoritenlisten oder Senderbestand vom TV neu laden | Implementiert; alle Listen A–H (Listen-Spalte), die gewählte Liste (Mitte) oder den Senderbestand (rechts); lokal geänderte Listen werden nur nach Bestätigung ersetzt |
 | Oberfläche Deutsch / Englisch | Implementiert; Sprache aus der Browsereinstellung, weitere Sprachen ergänzbar |
@@ -155,6 +157,7 @@ tv_compare.py                Nur lesender Vergleich TV-Snapshot ↔ Arbeitskopie
 backup_retention.py          Einstellungsdatei und automatische Begrenzung der TV-Sicherungen
 backup_export.py             Export mit Auswahl: Editor-CSV/JSON, LG-Rohdaten (JSON mit Schema, CSV als ZIP)
 backup_restore.py            Datei-Import: Formaterkennung, Backup-Abbild, Wiederherstellen auf die Arbeitskopie
+list_transfer.py             Einfügen/Importieren in eine Liste: ersetzen oder anhängen (ListFill)
 version.py                   Einzige Quelle der Versionsnummer (APP_VERSION, ?v=-Cache-Busting, Versions-Chip)
 i18n.py                      Lokalisierung: Sprachaushandlung, Message/LocalizedError, Fallback Englisch
 locales/<sprache>/           messages.json je Sprache (derzeit de, en); neuer Ordner = neue Sprache
@@ -178,7 +181,7 @@ Für Änderungen an Nummerierung, Identität und TV-Schreibpfad müssen insbeson
 
 ### Versions- und Dokumentationspflege
 
-- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus und ändert Nummern über `iepg` (Neunummerierung und Listen-Umbenennung am TV bestätigt); v0.6.1 bündelt Export und Import in je einem Dialog und stellt Backups auf der aktuellen Arbeitskopie wieder her; v0.6.2 ergänzt den SSH-Port im TV-Login, den v0.6.3 auch für die Übertragung nutzt; v0.6.4 nimmt die LG Channels in die Listen auf, überträgt alle Empfangsarten und sortiert die Liste der übrigen Sender.
+- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus und ändert Nummern über `iepg` (Neunummerierung und Listen-Umbenennung am TV bestätigt); v0.6.1 bündelt Export und Import in je einem Dialog und stellt Backups auf der aktuellen Arbeitskopie wieder her; v0.6.2 ergänzt den SSH-Port im TV-Login, den v0.6.3 auch für die Übertragung nutzt; v0.6.4 nimmt die LG Channels in die Listen auf, überträgt alle Empfangsarten und sortiert die Liste der übrigen Sender; v0.7.0 kopiert, fügt ein, exportiert und importiert einzelne Favoritenlisten.
 - Bei künftigen App-Releases `APP_VERSION` in `version.py`, beide READMEs und Tests konsistent halten. `?v=` und der Versions-Chip werden automatisch aus `version.py` gesetzt. Keine ungültigen verschachtelten `<script>`-/`<style>`-Tags erzeugen.
 
 ## Lizenz

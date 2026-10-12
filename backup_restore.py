@@ -304,7 +304,8 @@ class RestorePlanner:
         return candidates[0] if len(candidates) == 1 else None
 
     # -- analysis for the selection dialog ---------------------------------
-    def _list_ids(self, group):
+    def list_ids(self, group):
+        """Current IDs of a backup list in backup order (unmatched left out)."""
         return [self.match[b['id']] for b in self.snapshot.members(group) if b['id'] in self.match]
 
     def _current_ids(self, group):
@@ -326,8 +327,9 @@ class RestorePlanner:
             members = self.snapshot.members(g)
             lists.append({'id': g, 'count': len(members),
                           'skipped': [b['name'] for b in members if b['id'] not in self.match],
-                          'differs': self._list_ids(g) != self._current_ids(g),
-                          'name': self._name(g), 'currentName': self.current_names.get(g)})
+                          'differs': self.list_ids(g) != self._current_ids(g),
+                          'name': self._name(g), 'currentName': self.current_names.get(g),
+                          'listName': self.snapshot.names.get(g)})
         numbered = [b for b in self.snapshot.channels if b['id'] in self.match and b['number'] is not None]
         return {'format': self.snapshot.kind, 'lists': lists,
                 'numbers': self.snapshot.numbers and any(b['number'] != as_int(self.current[self.match[b['id']]]['number']) for b in numbered)}
@@ -342,7 +344,7 @@ class RestorePlanner:
             raise LocalizedError('error.import.list_not_in_file', group=missing[0])
         if numbers and not self.snapshot.numbers:
             raise LocalizedError('error.import.numbers_not_in_file')
-        plan = {'lists': {g: self._list_ids(g) for g in lists},
+        plan = {'lists': {g: self.list_ids(g) for g in lists},
                 'names': {g: self._name(g) for g in names if self._name(g)},
                 'numbers': {'changes': [], 'kept': [], 'locked': [], 'conflicts': [], 'displacedFavorites': []}}
         if numbers:

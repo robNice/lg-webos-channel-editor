@@ -29,6 +29,7 @@ from tv_identity import TvIdentity
 from tv_ping import TvPing
 from tv_address import SshPort
 from ip_channels import IpChannels
+from list_transfer import ListFill
 from tv_hostkeys import TvHostKeys
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -937,6 +938,48 @@ def apply_restore_plan(conn, plan):
         apply_renumber(conn, {'mode': mode, 'changes': changes})
 
 
+def fill_group(conn, group, ids, mode, name=None):
+    """Paste/import into one list: replace it or append missing channels.
+    Numbers and the other lists stay unchanged; ``name`` renames the list."""
+    if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
+    channels = all_channel_rows(conn)
+    target = [c['id'] for c in channel_sort([c for c in channels if c['favorites'][group]], group)]
+    result = ListFill([c['id'] for c in channels], target).plan(ids, mode)
+    replace_group_members(conn, group, result['ids'])
+    if name:
+        rename_group(conn, group, name)
+    return {'group': group, 'count': len(result['ids']), **{k: result[k] for k in ('added', 'removed', 'present', 'skipped')}}
+
+
+def paste_group_list(data):
+    """Paste channel IDs copied from a list (the clipboard lives in the browser)."""
+    name = data.get('name')
+    if name is not None and not isinstance(name, str): raise LocalizedError('error.edit.name_length')
+    with LOCK, connection() as conn:
+        with sqlite3.connect(str(DATA / 'before-list-paste.sqlite')) as backup:
+            conn.backup(backup)
+        with conn:
+            return fill_group(conn, str(data.get('group')), data.get('ids'), data.get('mode'), name)
+
+
+def import_into_group(token, data):
+    """One list of an uploaded file into a chosen list (any source list)."""
+    kind, raw = UPLOADS.get(token)
+    snapshot = backup_snapshot(kind, raw)
+    source, group = str(data.get('source')), str(data.get('group'))
+    if group not in GROUPS: raise LocalizedError('error.edit.invalid_group')
+    if source not in snapshot.lists: raise LocalizedError('error.import.list_not_in_file', group=source)
+    with LOCK, connection() as conn:
+        ids = restore_planner(conn, snapshot).list_ids(source)
+        with sqlite3.connect(str(DATA / 'before-file-import.sqlite')) as backup:
+            conn.backup(backup)
+        with conn:
+            result = fill_group(conn, group, ids, data.get('mode'),
+                                snapshot.names.get(source) if data.get('name') is True else None)
+    UPLOADS.drop(token)
+    return result
+
+
 def export_sqlite(conn):
     # Back up to a temp file for a consistent snapshot.
     tmp = DATA / f'export-{uuid.uuid4().hex}.sqlite'
@@ -1163,6 +1206,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(import_plan(str(data.get('token')), data))
             if self.path == '/api/import-apply':
                 return self.reply(apply_import(str(data.get('token')), data))
+            if self.path == '/api/list-paste':
+                return self.reply(paste_group_list(data))
+            if self.path == '/api/list-import':
+                return self.reply(import_into_group(str(data.get('token')), data))
             if self.path == '/api/tv-write-preview':
                 return self.reply(prepare_tv_write(data.get('host'),data.get('password'),request_port(data)))
             if self.path == '/api/tv-write-cancel':

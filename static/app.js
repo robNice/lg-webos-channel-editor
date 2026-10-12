@@ -403,12 +403,17 @@ const FORMAT_TEXT={
 // always complete; LG raw data includes everything else; list names need a
 // list; "only channels of the selected lists" needs a list.
 class ExportDialog{
+ // preset {lists:['C'],channels:'lists'}: export of one list. Only CSV/JSON,
+ // list names and numbers are offered; every other option is not shown (the
+ // content is built per dialog, so the general export always shows all).
+ constructor({lists=null,channels='all'}={}){this.lists=lists;this.channels=channels;this.single=!!lists;this.format=lists?'json':'sqlite';}
  open(){
    const form=document.createElement('form');form.className='choice-form';
-   const formats=['sqlite','csv','json'].map((kind,i)=>`<label class="choice"><input type="radio" name="format" value="${kind}"${i?'':' checked'}><span><strong>${esc(FORMAT_TEXT[kind].label)}</strong><small>${esc(FORMAT_TEXT[kind].desc)}</small></span></label>`).join('');
-   const lists=groups.map(g=>`<label class="check"><input type="checkbox" name="list" value="${esc(g.id)}" checked><span><strong>${esc(g.id)}</strong> · ${esc(g.name)}</span></label>`).join('');
-   form.innerHTML=`<p class="choice-intro">${esc(t('export.intro'))}</p>${formats}<fieldset class="restore-apply export-options"><legend>${esc(t('export.options'))}</legend><p class="choice-hint export-sqlite">${esc(t('export.sqlite_complete'))}</p><div class="export-lists"><label class="check"><input type="radio" name="channels" value="all" checked><span>${esc(t('export.channels_all'))}</span></label><label class="check"><input type="radio" name="channels" value="lists"><span>${esc(t('export.channels_lists'))}</span></label></div><p class="choice-hint">${esc(t('export.lists'))}</p><div class="export-lists">${lists}</div><label class="check"><input type="checkbox" name="names" checked><span>${esc(t('export.names'))}</span></label><label class="check"><input type="checkbox" name="numbers" checked><span>${esc(t('export.numbers'))}</span></label><label class="check"><input type="checkbox" name="raw"><span>${esc(t('export.raw'))}<small>${esc(t('export.raw_hint'))}</small></span></label></fieldset><div class="restore-summary export-summary" role="status" aria-live="polite"></div>`;
-   this.form=form;this.dialog=new ModalDialog(t('export.title'),form,{wide:true});const done=this.dialog.open();
+   const kinds=this.single?['json','csv']:['sqlite','csv','json'],hide=this.single?' hidden':'';
+   const formats=kinds.map(kind=>`<label class="choice"><input type="radio" name="format" value="${kind}"${kind===this.format?' checked':''}><span><strong>${esc(FORMAT_TEXT[kind].label)}</strong><small>${esc(FORMAT_TEXT[kind].desc)}</small></span></label>`).join('');
+   const lists=groups.map(g=>`<label class="check"><input type="checkbox" name="list" value="${esc(g.id)}"${!this.lists||this.lists.includes(g.id)?' checked':''}><span><strong>${esc(g.id)}</strong> · ${esc(g.name)}</span></label>`).join('');
+   form.innerHTML=`<p class="choice-intro">${esc(t('export.intro'))}</p>${formats}<fieldset class="restore-apply export-options"><legend>${esc(t('export.options'))}</legend>${this.single?`<p class="choice-hint export-single">${esc(t('export.single_list',{list:ListFillDialog.label(this.lists[0],groups.find(g=>g.id===this.lists[0])?.name)}))}</p>`:''}<p class="choice-hint export-sqlite"${hide}>${esc(t('export.sqlite_complete'))}</p><div class="export-lists export-channels"${hide}><label class="check"><input type="radio" name="channels" value="all"${this.channels==='all'?' checked':''}><span>${esc(t('export.channels_all'))}</span></label><label class="check"><input type="radio" name="channels" value="lists"${this.channels==='lists'?' checked':''}><span>${esc(t('export.channels_lists'))}</span></label></div><div class="export-list-choice"${hide}><p class="choice-hint">${esc(t('export.lists'))}</p><div class="export-lists">${lists}</div></div><label class="check"><input type="checkbox" name="names" checked><span>${esc(t('export.names'))}</span></label><label class="check"><input type="checkbox" name="numbers" checked><span>${esc(t('export.numbers'))}</span></label><label class="check export-raw"${hide}><input type="checkbox" name="raw"><span>${esc(t('export.raw'))}<small>${esc(t('export.raw_hint'))}</small></span></label></fieldset><div class="restore-summary export-summary" role="status" aria-live="polite"></div>`;
+   this.form=form;this.dialog=new ModalDialog(this.single?t('export.list_title',{group:this.lists[0]}):t('export.title'),form,{wide:true});const done=this.dialog.open();
    this.dialog.setActions([{label:t('common.cancel'),onclick:()=>this.dialog.close()},{label:t('export.download'),primary:true,onclick:()=>this.download()}]);
    form.onchange=()=>this.update();form.onsubmit=e=>{e.preventDefault();this.download();};this.update();
    return done;
@@ -434,6 +439,11 @@ class ExportDialog{
    const line=(label,items)=>`<p><b>${esc(label)}</b> ${esc(items.length?items.join(' · '):t('export.none'))}</p>`;
    const file=sqlite?FORMAT_TEXT.sqlite.file:this.kind==='json'?FORMAT_TEXT.json.file:sel.raw?t('export.filename.zip'):FORMAT_TEXT.csv.file;
    if(sqlite)return line(t('export.contains_label'),[t('export.item.everything')])+line(t('export.missing_label'),[])+`<p class="choice-hint">${esc(t('export.file',{file}))}</p>`;
+   if(this.single){
+     const contains=[t('export.item.lists',{lists:this.lists.join(', ')}),t('export.item.basics')],missing=[];
+     (sel.numbers?contains:missing).push(t('export.item.numbers'));(sel.names?contains:missing).push(t('export.item.names'));
+     return line(t('export.contains_label'),contains)+line(t('export.missing_label'),missing)+`<p class="choice-hint">${esc(t('export.file',{file}))}</p>`;
+   }
    const all=groups.map(g=>g.id),chosen=sel.lists.split(''),others=all.filter(g=>!chosen.includes(g));
    const contains=[t(sel.channels==='all'?'export.item.channels_all':'export.item.channels_lists'),t('export.item.basics')];
    const missing=[];
@@ -453,6 +463,8 @@ class ExportDialog{
 }
 // Step 1 of a file import: choose/drop a file, the server detects its format.
 class ImportDialog{
+ // target: import one list of the file into this list (ListImportDialog).
+ constructor({target=null}={}){this.target=target;}
  open(){
    const form=document.createElement('form');form.className='choice-form';
    form.innerHTML=`<p class="choice-intro">${esc(t('import.intro'))}</p><label class="dropzone"><input type="file" id="import-file" accept=".sqlite,.db,.sql,.csv,.json,.zip,application/vnd.sqlite3,text/csv,application/json,application/zip"><span class="dropzone-text">${esc(t('import.drop'))}</span><span class="dropzone-file"></span></label><p class="choice-hint">${esc(t('import.formats',{formats:Object.values(FORMAT_TEXT).map(f=>f.label).join(', ')}))}</p><p class="login-status" role="status" aria-live="polite"></p>`;
@@ -461,11 +473,11 @@ class ImportDialog{
    input.onchange=show;
    zone.ondragover=e=>{e.preventDefault();zone.classList.add('over')};zone.ondragleave=()=>zone.classList.remove('over');
    zone.ondrop=e=>{e.preventDefault();zone.classList.remove('over');if(e.dataTransfer.files.length){input.files=e.dataTransfer.files;show();}};
-   const dialog=new ModalDialog(t('import.title'),form);const done=dialog.open();
+   const dialog=new ModalDialog(this.target?t('listfill.import_title',{group:this.target}):t('import.title'),form);const done=dialog.open();
    const upload=async button=>{
      const file=input.files[0];if(!file){status.className='login-status error';status.textContent=t('import.choose_file');return;}
      const data=new FormData();data.append('file',file);button.disabled=true;status.className='login-status';status.textContent=t('import.progress');
-     try{const r=await fetch('/api/import',{method:'POST',body:data});const j=await r.json();if(!r.ok)throw Error(j.error||t('common.error'));dialog.close();await new RestoreDialog(j).open();}
+     try{const r=await fetch('/api/import',{method:'POST',body:data});const j=await r.json();if(!r.ok)throw Error(j.error||t('common.error'));dialog.close();if(this.target)await new ListImportDialog(j,this.target).open();else await new RestoreDialog(j).open();}
      catch(e){status.className='login-status error';status.textContent=e.message;button.disabled=false;}
    };
    form.onsubmit=e=>{e.preventDefault();upload(dialog.actions.querySelector('.primary'));};
@@ -523,6 +535,82 @@ class RestoreDialog{
    }catch(e){const summary=this.form.querySelector('.restore-summary');if(summary)summary.textContent=e.message;else alert(e.message);button.disabled=false;}
  }
 }
+// Copy/paste of favorite lists. The clipboard is a snapshot of the list at
+// copy time (IDs in list order), kept in memory for this page view.
+class ListClipboard{
+ static entry=null;
+ static copy(){
+   const g=groups.find(x=>x.id===selected);
+   ListClipboard.entry={source:selected,name:g?.name||'',ids:favorites.map(c=>c.id)};
+   ListClipboard.render();note(t('lists.copied',{group:selected,count:favorites.length}));
+ }
+ static render(){const b=$('#listpaste');b.disabled=!ListClipboard.entry;b.title=t(ListClipboard.entry?'lists.paste_title':'lists.paste_empty_title');}
+}
+// Paste or import into the selected list: replace it or append the channels
+// it does not hold yet. Subclasses provide the source (sourceHtml,
+// updateSource) and the request (send).
+class ListFillDialog{
+ static MODES={replace:['listfill.mode_replace','listfill.mode_replace_hint'],append:['listfill.mode_append','listfill.mode_append_hint']};
+ constructor(target){this.target=target;this.name=null;}
+ static label(id,name){return name?`${id} · ${name}`:id;}
+ open(title,applyLabel){
+   const g=groups.find(x=>x.id===this.target),form=document.createElement('form');form.className='choice-form';
+   form.innerHTML=`<div class="list-fill-source">${this.sourceHtml()}</div><p class="choice-hint">${esc(t('listfill.target',{list:ListFillDialog.label(this.target,g?.name),count:currentCounts[this.target]??0}))}</p>`
+     +Object.entries(ListFillDialog.MODES).map(([mode,[label,hint]],i)=>`<label class="choice"><input type="radio" name="mode" value="${mode}"${i?'':' checked'}><span><strong>${esc(t(label,{group:this.target}))}</strong><small>${esc(t(hint,{group:this.target}))}</small></span></label>`).join('')
+     +`<label class="check list-fill-name" hidden><input type="checkbox" name="name"><span></span></label><p class="choice-hint">${esc(t('listfill.hint'))}</p><p class="login-status" role="status" aria-live="polite"></p>`;
+   this.form=form;this.status=form.querySelector('.login-status');
+   this.dialog=new ModalDialog(title,form,{wide:true});const done=this.dialog.open();
+   this.dialog.setActions([{label:t('common.cancel'),onclick:()=>this.dialog.close()},{label:applyLabel,primary:true,onclick:b=>this.apply(b)}]);
+   form.onsubmit=e=>{e.preventDefault();this.apply(this.dialog.actions.querySelector('.primary'));};
+   form.onchange=e=>{if(e.target.name==='source')this.updateSource();};
+   this.updateSource();
+   return done;
+ }
+ // The source list name is offered only if it differs from the target's name.
+ offerName(name){
+   const current=groups.find(x=>x.id===this.target)?.name||'',box=this.form.querySelector('.list-fill-name'),offer=!!name&&name!==current;
+   box.hidden=!offer;if(!offer)box.querySelector('input').checked=false;
+   box.querySelector('span').textContent=offer?t('listfill.name',{name,current}):'';this.name=offer?name:null;
+ }
+ get mode(){return this.form.querySelector('input[name=mode]:checked').value;}
+ get takeName(){return !!this.name&&this.form.querySelector('input[name=name]').checked;}
+ async apply(button){
+   button.disabled=true;this.status.className='login-status';this.status.textContent='';
+   try{const r=await this.send();this.dialog.close();await sync();note(ListFillDialog.done(r));}
+   catch(e){this.status.className='login-status error';this.status.textContent=e.message;button.disabled=false;}
+ }
+ static done(r){return [t('listfill.done',{group:r.group,count:r.count,added:r.added,removed:r.removed,present:r.present}),r.skipped?t('listfill.skipped',{count:r.skipped}):''].filter(Boolean).join(' ');}
+}
+class ListPasteDialog extends ListFillDialog{
+ open(){const c=ListClipboard.entry;return super.open(t('listfill.paste_title',{source:c.source,group:this.target}),t('listfill.apply_paste'));}
+ sourceHtml(){const c=ListClipboard.entry;return `<p class="choice-intro">${esc(t('listfill.source_clipboard',{list:ListFillDialog.label(c.source,c.name),count:c.ids.length}))}</p>`;}
+ updateSource(){const c=ListClipboard.entry;this.offerName(c.name===t('group.default_name',{group:c.source})?null:c.name);}
+ send(){const c=ListClipboard.entry;return api('/api/list-paste',{group:this.target,ids:c.ids,mode:this.mode,...(this.takeName?{name:this.name}:{})});}
+}
+// One list of an uploaded file (any of its lists) into the selected list.
+class ListImportDialog extends ListFillDialog{
+ constructor(analysis,target){super(target);this.a=analysis;this.lists=analysis.lists||[];}
+ open(){
+   if(!this.lists.length){note(t('listfill.no_lists'),true);return Promise.resolve();}
+   return super.open(t('listfill.import_title',{group:this.target}),t('listfill.apply_import'));
+ }
+ sourceHtml(){
+   const chosen=this.lists.find(l=>l.id===this.target&&l.count)||this.lists.find(l=>l.count)||this.lists[0];
+   return `<p class="choice-intro">${esc(t('restore.detected',{format:FORMAT_TEXT[this.a.format]?.label||this.a.format}))}</p><label class="choice-hint" for="list-fill-source">${esc(t('listfill.source_file'))}</label><select class="search" id="list-fill-source" name="source">${this.lists.map(l=>`<option value="${esc(l.id)}"${l===chosen?' selected':''}>${esc(t('listfill.source_option',{list:ListFillDialog.label(l.id,l.listName),count:l.count}))}</option>`).join('')}</select><p class="choice-hint warn list-fill-skipped" hidden></p>`;
+ }
+ get source(){return this.lists.find(l=>l.id===this.form.querySelector('select[name=source]').value);}
+ updateSource(){
+   const l=this.source,skipped=this.form.querySelector('.list-fill-skipped');
+   skipped.hidden=!l.skipped.length;skipped.textContent=l.skipped.length?t('restore.skipped',{count:l.skipped.length,channels:l.skipped.join(', ')}):'';
+   this.offerName(l.listName===t('group.default_name',{group:l.id})?null:l.listName);
+ }
+ send(){return api('/api/list-import',{token:this.a.token,source:this.source.id,group:this.target,mode:this.mode,name:this.takeName});}
+}
+$('#listcopy').onclick=()=>ListClipboard.copy();
+$('#listpaste').onclick=()=>{if(ListClipboard.entry)new ListPasteDialog(selected).open();};
+$('#listexport').onclick=()=>new ExportDialog({lists:[selected],channels:'lists'}).open();
+$('#listimport').onclick=()=>new ImportDialog({target:selected}).open();
+ListClipboard.render();
 $('#exportbtn').onclick=()=>new ExportDialog().open();
 $('#importbtn').onclick=()=>new ImportDialog().open();
 // Import from the TV replaces the working copy (previous one: data/previous.sqlite).
@@ -561,7 +649,7 @@ class SettingsDialog{
    let current;try{current=await api('/api/settings');}catch(e){note(e.message,true);return;}
    const [low,high]=current.range,perTv=current.backups.perTv||[];
    const form=document.createElement('form');form.className='login-form settings-form';
-   form.innerHTML=`<label for="settings-keep">${esc(t('settings.backups_keep'))}</label><input class="search" id="settings-keep" name="tvBackupsKeep" type="number" min="${low}" max="${high}" step="1" required value="${Number(current.settings.tvBackupsKeep)}"><p class="choice-hint">${esc(t('settings.backups_hint',{count,size:(current.backups.bytes/1048576).toFixed(1)}))}</p><p class="login-status" role="status" aria-live="polite"></p><button type="submit" hidden></button>`;
+   form.innerHTML=`<label for="settings-keep">${esc(t('settings.backups_keep'))}</label><input class="search" id="settings-keep" name="tvBackupsKeep" type="number" min="${low}" max="${high}" step="1" required value="${Number(current.settings.tvBackupsKeep)}"><p class="choice-hint">${esc(t('settings.backups_hint',{count:current.backups.count,size:(current.backups.bytes/1048576).toFixed(1)}))}</p><p class="login-status" role="status" aria-live="polite"></p><button type="submit" hidden></button>`;
    const input=form.querySelector('input'),status=form.querySelector('.login-status');
    // The limit applies per TV: count what saving would delete in every TV folder.
    const preview=()=>{const keep=Number(input.value),drop=Number.isInteger(keep)&&keep>=low?perTv.reduce((sum,n)=>sum+Math.max(0,n-keep),0):0;status.className='login-status'+(drop?' warn':'');status.textContent=drop?t('settings.will_delete',{count:drop}):'';};

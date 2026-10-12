@@ -21,3 +21,5 @@ label{display:block;text-align:left;color:#b5c5db;margin-top:11px;margin-bottom:
 .reload-diff{margin:0 0 8px;padding-left:20px;color:#b4d1ed;overflow-wrap:anywhere}.reload-diff li{margin:2px 0}
 .panel-header>div{min-width:0}.panel-header small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .backups-list{display:flex;flex-direction:column;gap:2px;max-height:50vh;overflow:auto;margin-top:12px}.backups-form .backup-item{margin-top:0}.backups-form .backup-item input{width:auto}
+.list-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding-top:0;padding-bottom:0}.list-tools .btn{display:flex;align-items:center;justify-content:center;font-size:13px;padding:8px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.list-tools .btn:disabled{opacity:.5;cursor:not-allowed}.list-fill-source select{width:100%;margin:4px 0 6px}.list-fill-source .choice-hint.warn{margin-left:0}
+.choice-form [hidden]{display:none!important}.export-single{margin:4px 10px 6px;color:#e8eef7}

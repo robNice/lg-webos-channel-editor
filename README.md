@@ -4,7 +4,7 @@
 
 **English** · [Deutsch](README.de.md)
 
-**Current version: v0.6.4.** Last version fully confirmed on a real TV: **v0.5.24** (October 10, 2026). With v0.6.0, renumbering transfers (moves and swaps without the TV switching channels) and renaming a list were confirmed on the TV; copies with list migration have not yet been exercised there. v0.6.1 adds one export and one import dialog; an import restores a backup onto the current working copy. v0.6.2 adds an SSH port field to the TV login; v0.6.3 makes the transfer use that port too; v0.6.4 adds the LG Channels (IP) to the lists, transfers lists of every reception mode (satellite, cable, antenna, IP) and adds a sort order for the list of other channels.
+**Current version: v0.7.0.** Last version fully confirmed on a real TV: **v0.5.24** (October 10, 2026). With v0.6.0, renumbering transfers (moves and swaps without the TV switching channels) and renaming a list were confirmed on the TV; copies with list migration have not yet been exercised there. v0.6.1 adds one export and one import dialog; an import restores a backup onto the current working copy. v0.6.2 adds an SSH port field to the TV login; v0.6.3 makes the transfer use that port too; v0.6.4 adds the LG Channels (IP) to the lists, transfers lists of every reception mode (satellite, cable, antenna, IP) and adds a sort order for the list of other channels. v0.7.0 copies a favorite list into another list and exports or imports a single list.
 
 Browser-based management of LG webOS channel and favorite lists that **runs locally on your computer**. The application imports an SQLite backup of the LG TV via root SSH or from a file, edits a local working copy and can transfer selected changes back **via LG Luna APIs after a TV backup, live comparison, preview and explicit confirmation**. A running LG SQLite or LevelDB file is never overwritten directly.
 
@@ -45,7 +45,7 @@ Images are published on the GitHub Container Registry for `linux/amd64` and `lin
 | Tag | Content |
 | --- | --- |
 | `ghcr.io/robnice/lg-webos-channel-editor:latest` | latest release |
-| `ghcr.io/robnice/lg-webos-channel-editor:0.6.4` | a fixed release version |
+| `ghcr.io/robnice/lg-webos-channel-editor:0.7.0` | a fixed release version |
 | `ghcr.io/robnice/lg-webos-channel-editor:dev` | current development state, for tests only |
 
 A ready-to-copy example is [`docs/docker-compose.example.yml`](docs/docker-compose.example.yml): adjust the host port (left number, default `8765`) and the host directory for `/app/data`, then run `docker compose up -d` (or paste it into the OpenMediaVault Compose plugin) and open `http://<server>:8765`.
@@ -56,7 +56,7 @@ A ready-to-copy example is [`docs/docker-compose.example.yml`](docs/docker-compo
 
 Releases are built automatically: a tag `vX.Y.Z` on `main` (must match `version.py`) builds `:X.Y.Z` and `:latest` after the tests passed; every push to `dev` builds `:dev`.
 
-## Current features (v0.6.4)
+## Current features (v0.7.0)
 
 | Feature | Status |
 | --- | --- |
@@ -77,6 +77,8 @@ Releases are built automatically: a tag `vX.Y.Z` on `main` (must match `version.
 | Compare TV state, back up, create preview, confirm live write | Implemented; progress dialog (step x of n), cancel between steps, automatic re-import from the TV afterwards; on error aborts **without automatic rollback** |
 | Rename favorite lists | Implemented; transferred with “Transfer to TV” via `setGroupName` (as used by LG's own channel editor), verified in the TV database; confirmed on the TV with v0.6.0 for list H |
 | Export the working copy as SQLite, CSV or JSON | Implemented; one **Export** button; for CSV/JSON choose the contents (all channels or only list channels, lists A–H, list names, numbers, LG raw data); CSV with raw data is a ZIP (one CSV per table), JSON with raw data is a complete backup; SQLite is always complete |
+| Copy a favorite list and paste it into another list | Implemented; buttons **Copy** and **Paste** below the lists: copy the selected list, select the target list, paste. The target list is either **replaced** (exactly the copied channels in their order) or the copied channels are **appended** (its channels and order stay, only missing channels are added at the end); optionally the list name is taken over. Numbers and other lists stay unchanged; takes effect on the TV with “Transfer to TV” |
+| Export or import a single list | Implemented; **Export** below the lists exports only the selected list (JSON or CSV, optionally with list name and numbers; no other options shown); **Import** below the lists reads any export or backup file and puts one of its lists (selectable, e.g. list C of the file into list A) into the selected list – replace or append as with pasting, optionally with the list name. Channels are matched like a backup restore; channels that no longer exist are skipped and listed |
 | Import a backup (SQLite, CSV, JSON) | Implemented; one **Import** button, format detected automatically; you choose which lists, list names and channel numbers are restored onto the current working copy (or replace it completely with an SQLite file) |
 | Reload favorite lists or the channel inventory from the TV | Implemented; all lists A–H (list panel), the selected list (middle panel) or the channel inventory (right panel); replacing locally changed lists requires confirmation |
 | User interface in English / German | Implemented; language from the browser setting, more languages can be added |
@@ -155,6 +157,7 @@ tv_compare.py                Read-only comparison TV snapshot ↔ working copy (
 backup_retention.py          Settings file and automatic limit of the TV backups
 backup_export.py             Export with selection: editor CSV/JSON, LG raw data (JSON with schema, CSV as ZIP)
 backup_restore.py            File import: format detection, backup snapshot, restore onto the working copy
+list_transfer.py             Paste/import into one list: replace or append (ListFill)
 version.py                   Single source of the version number (APP_VERSION, ?v= cache busting, version chip)
 i18n.py                      Localization: language negotiation, Message/LocalizedError, English fallback
 locales/<language>/          messages.json per language (currently de, en); new folder = new language
@@ -178,7 +181,7 @@ For changes to numbering, identity and the TV write path, the tests for slot swa
 
 ### Version and documentation maintenance
 
-- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; v0.5.26 shows and filters the reception mode (satellite, cable, antenna); v0.6.0 runs the transfer as a background job with progress dialog, cancellation and automatic re-import and changes numbers via `iepg` (renumbering and list renaming confirmed on the TV); v0.6.1 combines export and import into one dialog each and restores backups onto the current working copy; v0.6.2 adds the SSH port to the TV login, which v0.6.3 also uses for the transfer; v0.6.4 adds the LG Channels to the lists, transfers every reception mode and sorts the list of other channels.
+- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; v0.5.26 shows and filters the reception mode (satellite, cable, antenna); v0.6.0 runs the transfer as a background job with progress dialog, cancellation and automatic re-import and changes numbers via `iepg` (renumbering and list renaming confirmed on the TV); v0.6.1 combines export and import into one dialog each and restores backups onto the current working copy; v0.6.2 adds the SSH port to the TV login, which v0.6.3 also uses for the transfer; v0.6.4 adds the LG Channels to the lists, transfers every reception mode and sorts the list of other channels; v0.7.0 copies, pastes, exports and imports single favorite lists.
 - For future app releases, keep `APP_VERSION` in `version.py`, both READMEs and the tests consistent. `?v=` and the version chip are set automatically from `version.py`. Do not create invalid nested `<script>`/`<style>` tags.
 
 ## License
