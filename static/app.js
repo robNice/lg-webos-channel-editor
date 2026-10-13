@@ -55,9 +55,13 @@ class Translator{
 const translator=Translator.fromPage();const t=(key,params)=>translator.t(key,params);
 let selected='A',groups=[],favorites=[],others=[],dragged=null,busy=false;
 const $=s=>document.querySelector(s);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Names are user data (mostly Latin): isolate them so a right-to-left page keeps "SERIEN+ HD" intact.
+const bidi=value=>`<bdi>${esc(value)}</bdi>`;
+// Arrow in reading direction: points left in right-to-left languages.
+const arrow=()=>document.documentElement.dir==='rtl'?'\u2190':'\u2192';
 async function api(path,data){const r=await fetch(path,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined});const j=await r.json();if(!r.ok)throw Error(j.error||t('common.error'));return j;}
 function note(message,error=false){const x=$('#status');x.textContent=message;x.className='status'+(error?' error':'');}
-function renderGroups(counts){$('#groups').innerHTML=groups.map(g=>`<button class="group ${selected===g.id?'active':''}" data-group="${g.id}"><span><strong>${esc(g.id)}</strong> · ${esc(g.name)}</span><b>${counts[g.id]??0}</b></button>`).join('');document.querySelectorAll('.group').forEach(b=>b.onclick=()=>{selected=b.dataset.group;$('#favSearch').value='';renderGroups(currentCounts);loadChannels();});$('#currentname').textContent=`${selected} · ${groups.find(g=>g.id===selected)?.name||''}`;}
+function renderGroups(counts){$('#groups').innerHTML=groups.map(g=>`<button class="group ${selected===g.id?'active':''}" data-group="${g.id}"><span><strong>${esc(g.id)}</strong> · ${bidi(g.name)}</span><b>${counts[g.id]??0}</b></button>`).join('');document.querySelectorAll('.group').forEach(b=>b.onclick=()=>{selected=b.dataset.group;$('#favSearch').value='';renderGroups(currentCounts);loadChannels();});$('#currentname').textContent=`${selected} · ${groups.find(g=>g.id===selected)?.name||''}`;}
 let currentCounts={};
 async function refresh(){const s=await api('/api/status');$('#start').style.display=s.loaded?'none':'block';$('#workspace').style.display=s.loaded?'block':'none';for(const id of ['#exportbtn','#tvimportbtn'])$(id).hidden=!s.loaded;if(s.loaded){groups=s.groups;currentCounts=s.counts;renderGroups(s.counts);await loadChannels();}else if(s.error)$('#tv-error').textContent=s.error;}
 async function loadChannels(){const data=await api('/api/channels?group='+selected);favorites=data.favorites;others=data.others;renderChannels();}
@@ -119,7 +123,7 @@ class ChannelSort{
  static remember(value){try{localStorage.setItem(ChannelSort.STORAGE,value)}catch{}}
 }
 const KIND_LABEL={radio:'kind.radio',tv:'kind.tv'},ACCESS_LABEL={encrypted:'access.encrypted',free:'access.free'};
-function row(c,favorite){const div=document.createElement('div');div.className='item';div.dataset.id=c.id;div.draggable=favorite;div.innerHTML=`${favorite?`<span class="handle" title="${esc(t('row.drag'))}">⠿</span>`:''}${c.numberLocked?`<span class="number number-locked" title="${esc(t('row.ip_number_locked'))}">${esc(c.number)}</span>`:`<button type="button" class="number number-button" title="${esc(t('row.change_number'))}">${esc(c.number)} ✎</button>`}<span class="item-name" title="${esc(c.name)}">${esc(c.name)}<div class="item-meta">${esc([t(RECEPTION_LABEL[c.reception]||'reception.other'),c.satellite].filter(Boolean).join(' '))} · ${esc(t(KIND_LABEL[c.kind]||'kind.unknown'))} · ${esc(t(ACCESS_LABEL[c.access]||'access.unknown'))}</div></span><button class="item-actions ${favorite?'danger':''}" title="${esc(t(favorite?'row.remove_title':'row.add_title'))}">${esc(t(favorite?'row.remove':'row.add'))}</button>`;
+function row(c,favorite){const div=document.createElement('div');div.className='item';div.dataset.id=c.id;div.draggable=favorite;div.innerHTML=`${favorite?`<span class="handle" title="${esc(t('row.drag'))}">⠿</span>`:''}${c.numberLocked?`<span class="number number-locked" title="${esc(t('row.ip_number_locked'))}">${esc(c.number)}</span>`:`<button type="button" class="number number-button" title="${esc(t('row.change_number'))}">${esc(c.number)} ✎</button>`}<span class="item-name" title="${esc(c.name)}">${bidi(c.name)}<div class="item-meta">${esc([t(RECEPTION_LABEL[c.reception]||'reception.other'),c.satellite].filter(Boolean).join(' '))} · ${esc(t(KIND_LABEL[c.kind]||'kind.unknown'))} · ${esc(t(ACCESS_LABEL[c.access]||'access.unknown'))}</div></span><button class="item-actions ${favorite?'danger':''}" title="${esc(t(favorite?'row.remove_title':'row.add_title'))}">${esc(t(favorite?'row.remove':'row.add'))}</button>`;
 if(!c.numberLocked)div.querySelector('.number-button').onclick=async()=>{const newNumber=await askProgrammeNumber(t('number.dialog.title'),c.number,c.name);if(newNumber===null)return;try{const result=await api('/api/channel-number',{id:c.id,number:newNumber});await sync();note(result.numberChange?.swappedWith?t('status.swapped',{name:result.numberChange.swappedWith}):t('status.number_changed'))}catch(e){note(e.message,true)}};
 div.querySelector('.item-actions').onclick=async()=>{try{await api('/api/member',{group:selected,id:c.id,enabled:!favorite});await sync();note(t('status.saved'));}catch(e){note(e.message,true)}};
 if(favorite){div.addEventListener('dragstart',e=>{dragged=c.id;e.dataTransfer.effectAllowed='move';div.classList.add('dragging')});div.addEventListener('dragend',()=>{dragged=null;document.querySelectorAll('.item').forEach(e=>e.classList.remove('dragging','over'))});div.addEventListener('dragover',e=>{e.preventDefault();div.classList.add('over')});div.addEventListener('dragleave',()=>div.classList.remove('over'));div.addEventListener('drop',async e=>{e.preventDefault();div.classList.remove('over');if(!dragged||dragged===c.id)return;const ids=favorites.map(x=>x.id);ids.splice(ids.indexOf(dragged),1);ids.splice(ids.indexOf(c.id),0,dragged);try{await api('/api/reorder',{group:selected,ids});await sync();note(t('status.order_saved'))}catch(e){note(e.message,true)}})}return div;}
@@ -270,9 +274,9 @@ class SyncReport{
    root.innerHTML=`<p class="report-summary">${total?t('report.summary_html',{total:Number(total)}):esc(t('report.in_sync'))}</p>`+
      `<p class="report-meta">${esc(r.warning)}</p>`+
      (total?`<input class="search report-filter" type="search" placeholder="${esc(t('report.filter'))}" aria-label="${esc(t('report.filter_label'))}">`:'')+
-     this.section(t('report.changed'),d.changed,[t('report.col.channel'),t('report.col.tv'),t('report.col.local'),t('report.col.difference')],c=>[esc(c.name),esc(c.tvNumber),esc(c.localNumber),c.changes.map(esc).join('<br>')])+
-     this.section(t('report.only_local'),d.added,listing,c=>[esc(c.name),esc(c.number),esc(SyncReport.favoriteList(c.favorites))])+
-     this.section(t('report.only_tv'),d.removed,listing,c=>[esc(c.name),esc(c.number),esc(SyncReport.favoriteList(c.favorites))]);
+     this.section(t('report.changed'),d.changed,[t('report.col.channel'),t('report.col.tv'),t('report.col.local'),t('report.col.difference')],c=>[bidi(c.name),esc(c.tvNumber),esc(c.localNumber),c.changes.map(esc).join('<br>')])+
+     this.section(t('report.only_local'),d.added,listing,c=>[bidi(c.name),esc(c.number),esc(SyncReport.favoriteList(c.favorites))])+
+     this.section(t('report.only_tv'),d.removed,listing,c=>[bidi(c.name),esc(c.number),esc(SyncReport.favoriteList(c.favorites))]);
    const filter=root.querySelector('.report-filter');
    if(filter)filter.addEventListener('input',()=>{const q=filter.value.toLowerCase().trim();root.querySelectorAll('tbody tr').forEach(tr=>tr.hidden=!!q&&!tr.dataset.search.includes(q));});
    return root;
@@ -410,14 +414,15 @@ $('#favreload').onclick=async()=>{
  }catch(e){note(e.message,true)}
 };
 $('#helpbtn').onclick=()=>new ModalDialog(t('help.title'),$('#help-text').content.cloneNode(true)).open();
-const OPERATION_LABEL={add:t('tv.write.kind.add'),remove:t('tv.write.kind.remove'),number:t('tv.write.kind.number')};
+// Keys only: texts are translated when used, so they follow a language switch.
+const OPERATION_KIND={add:'tv.write.kind.add',remove:'tv.write.kind.remove',number:'tv.write.kind.number'};
 function describeOperation(o){
  if(o.type==='order')return t('tv.write.op_order',{group:o.group,count:o.count});
  if(o.type==='rename_group')return t('tv.write.op_rename',{group:o.group,from:o.from,to:o.to});
  if(o.type==='swap')return t('tv.write.op_swap',{channel:o.channel,from:o.from,other:o.otherChannel,to:o.to});
  if(o.type==='reuse_copy_favorite')return t('tv.write.op_reuse',{channel:o.channel,from:o.from,to:o.to,groups:o.existingGroups?.filter(g=>g!=='A').join(', ')||t('common.none')});
  if(o.type==='copy_favorite')return t('tv.write.op_copy',{channel:o.channel,from:o.from,to:o.to});
- return `${OPERATION_LABEL[o.type]||o.type}: ${o.channel} ${o.group||''} ${o.from||''}→${o.to||''}`;
+ return `${OPERATION_KIND[o.type]?t(OPERATION_KIND[o.type]):o.type}: ${o.channel} ${o.group||''} ${o.from||''}${arrow()}${o.to||''}`;
 }
 $('#tvwrite').onclick=async()=>{
  const credentials=await session.credentials();if(!credentials)return;
@@ -440,12 +445,14 @@ $('#tvwrite').onclick=async()=>{
    if(result.reimport==='ok')await refresh();
  }catch(e){note(e.message,true);alert(t('tv.write.failed',{error:e.message}))}finally{btn.disabled=false;}
 };
-const FORMAT_TEXT={
+// Translated when used (not at load), so the texts follow a language switch.
+const formatText=kind=>({
  sqlite:{label:t('format.sqlite'),desc:t('export.desc_sqlite'),file:t('export.filename.sqlite')},
  csv:{label:t('format.csv'),desc:t('export.desc_csv'),file:t('export.filename.csv')},
  json:{label:t('format.json'),desc:t('export.desc_json'),file:t('export.filename.json')},
- zip:{label:t('format.zip')},
-};
+ zip:{label:t('format.zip'),file:t('export.filename.zip')},
+})[kind];
+const formatLabel=format=>formatText(format)?.label??format;
 // Export: format plus selection of the contents. Dependencies: SQLite is
 // always complete; LG raw data includes everything else; list names need a
 // list; "only channels of the selected lists" needs a list.
@@ -457,8 +464,8 @@ class ExportDialog{
  open(){
    const form=document.createElement('form');form.className='choice-form';
    const kinds=this.single?['json','csv']:['sqlite','csv','json'],hide=this.single?' hidden':'';
-   const formats=kinds.map(kind=>`<label class="choice"><input type="radio" name="format" value="${kind}"${kind===this.format?' checked':''}><span><strong>${esc(FORMAT_TEXT[kind].label)}</strong><small>${esc(FORMAT_TEXT[kind].desc)}</small></span></label>`).join('');
-   const lists=groups.map(g=>`<label class="check"><input type="checkbox" name="list" value="${esc(g.id)}"${!this.lists||this.lists.includes(g.id)?' checked':''}><span><strong>${esc(g.id)}</strong> · ${esc(g.name)}</span></label>`).join('');
+   const formats=kinds.map(kind=>`<label class="choice"><input type="radio" name="format" value="${kind}"${kind===this.format?' checked':''}><span><strong>${esc(formatText(kind).label)}</strong><small>${esc(formatText(kind).desc)}</small></span></label>`).join('');
+   const lists=groups.map(g=>`<label class="check"><input type="checkbox" name="list" value="${esc(g.id)}"${!this.lists||this.lists.includes(g.id)?' checked':''}><span><strong>${esc(g.id)}</strong> · ${bidi(g.name)}</span></label>`).join('');
    form.innerHTML=`<p class="choice-intro">${esc(t('export.intro'))}</p>${formats}<fieldset class="restore-apply export-options"><legend>${esc(t('export.options'))}</legend>${this.single?`<p class="choice-hint export-single">${esc(t('export.single_list',{list:ListFillDialog.label(this.lists[0],groups.find(g=>g.id===this.lists[0])?.name)}))}</p>`:''}<p class="choice-hint export-sqlite"${hide}>${esc(t('export.sqlite_complete'))}</p><div class="export-lists export-channels"${hide}><label class="check"><input type="radio" name="channels" value="all"${this.channels==='all'?' checked':''}><span>${esc(t('export.channels_all'))}</span></label><label class="check"><input type="radio" name="channels" value="lists"${this.channels==='lists'?' checked':''}><span>${esc(t('export.channels_lists'))}</span></label></div><div class="export-list-choice"${hide}><p class="choice-hint">${esc(t('export.lists'))}</p><div class="export-lists">${lists}</div></div><label class="check"><input type="checkbox" name="names" checked><span>${esc(t('export.names'))}</span></label><label class="check"><input type="checkbox" name="numbers" checked><span>${esc(t('export.numbers'))}</span></label><label class="check export-raw"${hide}><input type="checkbox" name="raw"><span>${esc(t('export.raw'))}<small>${esc(t('export.raw_hint'))}</small></span></label></fieldset><div class="restore-summary export-summary" role="status" aria-live="polite"></div>`;
    this.form=form;this.dialog=new ModalDialog(this.single?t('export.list_title',{group:this.lists[0]}):t('export.title'),form,{wide:true});const done=this.dialog.open();
    this.dialog.setActions([{label:t('common.cancel'),onclick:()=>this.dialog.close()},{label:t('export.download'),primary:true,onclick:()=>this.download()}]);
@@ -484,7 +491,7 @@ class ExportDialog{
  }
  describe(sqlite,sel){
    const line=(label,items)=>`<p><b>${esc(label)}</b> ${esc(items.length?items.join(' · '):t('export.none'))}</p>`;
-   const file=sqlite?FORMAT_TEXT.sqlite.file:this.kind==='json'?FORMAT_TEXT.json.file:sel.raw?t('export.filename.zip'):FORMAT_TEXT.csv.file;
+   const file=formatText(sqlite?'sqlite':this.kind==='json'?'json':sel.raw?'zip':'csv').file;
    if(sqlite)return line(t('export.contains_label'),[t('export.item.everything')])+line(t('export.missing_label'),[])+`<p class="choice-hint">${esc(t('export.file',{file}))}</p>`;
    if(this.single){
      const contains=[t('export.item.lists',{lists:this.lists.join(', ')}),t('export.item.basics')],missing=[];
@@ -514,7 +521,7 @@ class ImportDialog{
  constructor({target=null}={}){this.target=target;}
  open(){
    const form=document.createElement('form');form.className='choice-form';
-   form.innerHTML=`<p class="choice-intro">${esc(t('import.intro'))}</p><label class="dropzone"><input type="file" id="import-file" accept=".sqlite,.db,.sql,.csv,.json,.zip,application/vnd.sqlite3,text/csv,application/json,application/zip"><span class="dropzone-text">${esc(t('import.drop'))}</span><span class="dropzone-file"></span></label><p class="choice-hint">${esc(t('import.formats',{formats:Object.values(FORMAT_TEXT).map(f=>f.label).join(', ')}))}</p><p class="login-status" role="status" aria-live="polite"></p>`;
+   form.innerHTML=`<p class="choice-intro">${esc(t('import.intro'))}</p><label class="dropzone"><input type="file" id="import-file" accept=".sqlite,.db,.sql,.csv,.json,.zip,application/vnd.sqlite3,text/csv,application/json,application/zip"><span class="dropzone-text">${esc(t('import.drop'))}</span><span class="dropzone-file"></span></label><p class="choice-hint">${esc(t('import.formats',{formats:['sqlite','csv','json','zip'].map(formatLabel).join(', ')}))}</p><p class="login-status" role="status" aria-live="polite"></p>`;
    const input=form.querySelector('input'),zone=form.querySelector('.dropzone'),status=form.querySelector('.login-status');
    const show=()=>{form.querySelector('.dropzone-file').textContent=input.files[0]?.name||'';status.textContent='';};
    input.onchange=show;
@@ -539,7 +546,7 @@ class RestoreDialog{
  open(){
    const a=this.a,form=document.createElement('form');form.className='choice-form restore-form';
    const lists=(a.lists||[]).map(l=>`<div class="restore-list"><label class="check"><input type="checkbox" name="list" value="${l.id}"${l.differs&&l.count?' checked':''}><span><strong>${esc(l.id)}</strong> · ${esc(t('restore.list_count',{count:l.count}))}${l.differs?'':` <em>${esc(t('restore.list_same'))}</em>`}</span></label>${l.skipped.length?`<p class="choice-hint warn">${esc(t('restore.skipped',{count:l.skipped.length,channels:l.skipped.join(', ')}))}</p>`:''}${l.name?`<label class="check sub"><input type="checkbox" name="name" value="${l.id}"><span>${esc(t('restore.name',{name:l.name,current:l.currentName||''}))}</span></label>`:''}</div>`).join('');
-   form.innerHTML=`<p class="choice-intro">${esc(t('restore.detected',{format:FORMAT_TEXT[a.format]?.label||a.format}))}</p>`
+   form.innerHTML=`<p class="choice-intro">${esc(t('restore.detected',{format:formatLabel(a.format)}))}</p>`
      +(a.canReplace?`<label class="choice"><input type="radio" name="mode" value="apply"${a.canApply?' checked':' disabled'}><span><strong>${esc(t('restore.mode_apply'))}</strong><small>${esc(t('restore.mode_apply_hint'))}</small></span></label><label class="choice"><input type="radio" name="mode" value="replace"${a.canApply?'':' checked'}><span><strong>${esc(t('restore.mode_replace'))}</strong><small>${esc(t('restore.mode_replace_hint'))}</small></span></label>`:'')
      +(a.canApply?`<fieldset class="restore-apply"><legend>${esc(t('restore.lists'))}</legend>${lists}<label class="check numbers"><input type="checkbox" name="numbers"${a.numbers?'':' disabled'}><span>${esc(t(a.numbers?'restore.numbers':'restore.numbers_same'))}<small>${esc(t('restore.numbers_hint'))}</small></span></label></fieldset><div class="restore-summary" role="status" aria-live="polite"></div>`:'');
    this.form=form;this.dialog=new ModalDialog(t('restore.title'),form,{wide:true});const done=this.dialog.open();
@@ -569,7 +576,7 @@ class RestoreDialog{
    if(n.locked.length)lines.push(t('restore.ip_locked',{channels:n.locked.join(', ')}));
    if(n.conflicts.length)lines.push(t('restore.conflicts',{channels:n.conflicts.join(', ')}));
    if(n.displacedFavorites.length)lines.push(t('restore.displaced',{channels:n.displacedFavorites.map(d=>t('renumber.other_lists_line',{name:d.name,groups:d.groups.join(', '),old:d.old,new:d.new}).trim()).join('; ')}));
-   const details=n.changes.length?`<details><summary>${esc(t('restore.number_details'))}</summary><ul>${n.changes.map(c=>`<li>${esc(c.name)}: ${esc(c.old)} → ${esc(c.new)}</li>`).join('')}</ul></details>`:'';
+   const details=n.changes.length?`<details><summary>${esc(t('restore.number_details'))}</summary><ul>${n.changes.map(c=>`<li>${bidi(c.name)}: ${esc(c.old)} ${arrow()} ${esc(c.new)}</li>`).join('')}</ul></details>`:'';
    return lines.map(l=>`<p>${esc(l)}</p>`).join('')+details+`<p class="choice-hint">${esc(t('restore.tv_hint'))}</p>`;
  }
  async apply(button){
@@ -643,7 +650,7 @@ class ListImportDialog extends ListFillDialog{
  }
  sourceHtml(){
    const chosen=this.lists.find(l=>l.id===this.target&&l.count)||this.lists.find(l=>l.count)||this.lists[0];
-   return `<p class="choice-intro">${esc(t('restore.detected',{format:FORMAT_TEXT[this.a.format]?.label||this.a.format}))}</p><label class="choice-hint" for="list-fill-source">${esc(t('listfill.source_file'))}</label><select class="search" id="list-fill-source" name="source">${this.lists.map(l=>`<option value="${esc(l.id)}"${l===chosen?' selected':''}>${esc(t('listfill.source_option',{list:ListFillDialog.label(l.id,l.listName),count:l.count}))}</option>`).join('')}</select><p class="choice-hint warn list-fill-skipped" hidden></p>`;
+   return `<p class="choice-intro">${esc(t('restore.detected',{format:formatLabel(this.a.format)}))}</p><label class="choice-hint" for="list-fill-source">${esc(t('listfill.source_file'))}</label><select class="search" id="list-fill-source" name="source">${this.lists.map(l=>`<option value="${esc(l.id)}"${l===chosen?' selected':''}>${esc(t('listfill.source_option',{list:ListFillDialog.label(l.id,l.listName),count:l.count}))}</option>`).join('')}</select><p class="choice-hint warn list-fill-skipped" hidden></p>`;
  }
  get source(){return this.lists.find(l=>l.id===this.form.querySelector('select[name=source]').value);}
  updateSource(){
