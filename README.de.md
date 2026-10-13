@@ -4,7 +4,7 @@
 
 [English](README.md) · **Deutsch**
 
-**Aktuelle Version: v0.7.0.** Zuletzt vollständig am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). Mit v0.6.0 wurden Neunummerierungen (Verschieben und Tauschen, ohne dass der TV umschaltet) und das Umbenennen einer Liste am TV bestätigt; Kopien mit Listenübernahme sind dort noch nicht erprobt. v0.6.1 bündelt Export und Import in je einem Dialog; ein Import stellt ein Backup auf der aktuellen Arbeitskopie wieder her. v0.6.2 ergänzt ein Feld für den SSH-Port im TV-Login; v0.6.3 nutzt diesen Port auch bei der Übertragung; v0.6.4 nimmt die LG Channels (IP) in die Listen auf, überträgt Listen aller Empfangsarten (Satellit, Kabel, Antenne, IP) und bietet eine Sortierung für die Liste der übrigen Sender. v0.7.0 kopiert eine Favoritenliste in eine andere Liste und exportiert oder importiert einzelne Listen.
+**Aktuelle Version: v0.8.0.** Zuletzt vollständig am echten TV bestätigter Stand: **v0.5.24** (10. Oktober 2026). Mit v0.6.0 wurden Neunummerierungen (Verschieben und Tauschen, ohne dass der TV umschaltet) und das Umbenennen einer Liste am TV bestätigt; Kopien mit Listenübernahme sind dort noch nicht erprobt. v0.6.1 bündelt Export und Import in je einem Dialog; ein Import stellt ein Backup auf der aktuellen Arbeitskopie wieder her. v0.6.2 ergänzt ein Feld für den SSH-Port im TV-Login; v0.6.3 nutzt diesen Port auch bei der Übertragung; v0.6.4 nimmt die LG Channels (IP) in die Listen auf, überträgt Listen aller Empfangsarten (Satellit, Kabel, Antenne, IP) und bietet eine Sortierung für die Liste der übrigen Sender. v0.7.0 kopiert eine Favoritenliste in eine andere Liste und exportiert oder importiert einzelne Listen; v0.8.0 ergänzt eine Sprachauswahl im Kopfbereich (Wechsel ohne Neuladen), 20 Oberflächensprachen und sprachunabhängige CSV-/JSON-Exporte.
 
 Browserbasierte, **lokal auf dem Computer laufende** Verwaltung der LG-webOS-Sender- und Favoritenlisten. Die Anwendung importiert eine SQLite-Sicherung des LG-TV per Root-SSH oder aus einer Datei, bearbeitet eine lokale Arbeitskopie und kann ausgewählte Änderungen **nach TV-Backup, Live-Abgleich, Vorschau und ausdrücklicher Bestätigung über LG-Luna-APIs zurückübertragen**. Eine laufende LG-SQLite- oder LevelDB-Datei wird niemals direkt überschrieben.
 
@@ -45,7 +45,7 @@ Images werden in der GitHub Container Registry für `linux/amd64` und `linux/arm
 | Tag | Inhalt |
 | --- | --- |
 | `ghcr.io/robnice/lg-webos-channel-editor:latest` | neueste Release-Version |
-| `ghcr.io/robnice/lg-webos-channel-editor:0.7.0` | eine feste Release-Version |
+| `ghcr.io/robnice/lg-webos-channel-editor:0.8.0` | eine feste Release-Version |
 | `ghcr.io/robnice/lg-webos-channel-editor:dev` | aktueller Entwicklungsstand, nur zum Testen |
 
 Ein Beispiel zum Kopieren ist [`docs/docker-compose.example.yml`](docs/docker-compose.example.yml): Host-Port (linke Zahl, Standard `8765`) und Host-Verzeichnis für `/app/data` anpassen, dann `docker compose up -d` (oder in das Compose-Plugin von OpenMediaVault einfügen) und `http://<server>:8765` öffnen.
@@ -56,7 +56,7 @@ Ein Beispiel zum Kopieren ist [`docs/docker-compose.example.yml`](docs/docker-co
 
 Releases entstehen automatisch: Ein Tag `vX.Y.Z` auf `main` (muss zu `version.py` passen) baut nach erfolgreichen Tests `:X.Y.Z` und `:latest`; jeder Push auf `dev` baut `:dev`.
 
-## Aktueller Funktionsumfang (v0.7.0)
+## Aktueller Funktionsumfang (v0.8.0)
 
 | Funktion | Stand |
 | --- | --- |
@@ -81,7 +81,7 @@ Releases entstehen automatisch: Ein Tag `vX.Y.Z` auf `main` (muss zu `version.py
 | Einzelne Liste exportieren oder importieren | Implementiert; **Exportieren** unter den Listen exportiert nur die ausgewählte Liste (JSON oder CSV, wahlweise mit Listennamen und Nummern; keine weiteren Optionen); **Importieren** unter den Listen liest jede Export- oder Sicherungsdatei und übernimmt eine ihrer Listen (wählbar, z. B. Liste C der Datei in Liste A) in die ausgewählte Liste – ersetzen oder anhängen wie beim Einfügen, optional mit Listennamen. Sender werden wie beim Wiederherstellen eines Backups zugeordnet; nicht mehr vorhandene werden übersprungen und genannt |
 | Backup importieren (SQLite, CSV, JSON) | Implementiert; ein **Import**-Button, Format wird automatisch erkannt; du wählst, welche Listen, Listennamen und Programmnummern auf die aktuelle Arbeitskopie übernommen werden (oder ersetzt sie mit einer SQLite-Datei komplett) |
 | Favoritenlisten oder Senderbestand vom TV neu laden | Implementiert; alle Listen A–H (Listen-Spalte), die gewählte Liste (Mitte) oder den Senderbestand (rechts); lokal geänderte Listen werden nur nach Bestätigung ersetzt |
-| Oberfläche Deutsch / Englisch | Implementiert; Sprache aus der Browsereinstellung, weitere Sprachen ergänzbar |
+| Oberfläche in 20 Sprachen | Implementiert; Sprache aus der Browsereinstellung oder per Auswahl im Kopfbereich (gemerkt, Wechsel ohne Neuladen), Pluralformen je Sprache, Arabisch von rechts nach links; weitere Sprachen ergänzbar |
 
 **Neue Programmnummern sind in dieser Anwendung auf `1–99` begrenzt**, entsprechend dem LG-Eingabedialog. Das ist eine **bewusste UI-Regel**, keine Behauptung, dass die Luna-API niemals höhere Nummern akzeptiert. Bereits existierende Nummern über 99 (z. B. 101, 1004, 4096) werden unverändert eingelesen und angezeigt. Automatisches Umnummerieren kann andere Sender und die globale Nummerierung beeinflussen; die Vorschau weist darauf hin. LG nummeriert jede Empfangsart (Satellit, Kabel, Antenne) getrennt; eine Favoritenliste lässt sich daher nur durchnummerieren, wenn alle ihre Sender dieselbe Empfangsart haben. Senderlisten aus früheren Kabel- oder Antennensuchläufen bleiben auf dem TV erhalten, auch wenn dort nichts mehr angeschlossen ist.
 
@@ -99,7 +99,9 @@ Releases entstehen automatisch: Ein Tag `vX.Y.Z` auf `main` (muss zu `version.py
 
 ## Sprachen
 
-Die Oberfläche und alle Meldungen gibt es derzeit auf **Deutsch** und **Englisch**. Die Sprache richtet sich nach der Spracheinstellung des Browsers (`Accept-Language`); ist keine passende Sprache vorhanden, wird **Englisch** verwendet. Weitere Sprachen: Ordner `locales/<sprachkürzel>/` mit einer übersetzten `messages.json` anlegen (Vorlage: `locales/en/messages.json`); fehlende Einträge fallen automatisch auf Englisch zurück.
+Die Oberfläche und alle Meldungen gibt es in 20 Sprachen: Arabisch, Dänisch, Deutsch, Englisch, Finnisch, Französisch, Griechisch, Isländisch, Italienisch, Japanisch, Koreanisch, Norwegisch (Bokmål), Polnisch, Portugiesisch (Portugal und Brasilien), Russisch, Schwedisch, Spanisch, Türkisch und Ukrainisch. Standardmäßig richtet sich die Sprache nach der Spracheinstellung des Browsers (`Accept-Language`); ist keine passende Sprache vorhanden, wird **Englisch** verwendet. Die **Sprachauswahl im Kopfbereich** hat Vorrang: Die gewählte Sprache wird in diesem Browser gemerkt (Cookie `lang`, ein Jahr) und gilt für die Seite und alle Meldungen; **„Browsersprache“** kehrt zur Browsereinstellung zurück. Der Wechsel wirkt sofort, ohne die Seite neu zu laden; eine TV-Anmeldung bleibt bestehen. Geladen werden nur die Texte der aktuellen Sprache; eine andere Sprache wird erst beim Umschalten abgerufen. Arabisch wird von rechts nach links dargestellt (das Layout für Rechts-nach-links-Sprachen wird noch verfeinert). Exportdateien (CSV, JSON) sind unabhängig von der Oberflächensprache immer englisch, damit sie zwischen Nutzern verschiedener Sprachen austauschbar sind; ältere CSV-Dateien mit deutscher oder englischer Kopfzeile lassen sich weiterhin importieren.
+
+Weitere Sprachen: Ordner `locales/<sprachkürzel>/` (Regionalvarianten als `<sprache>-<REGION>`, z. B. `pt-BR`) mit einer übersetzten `messages.json` anlegen (Vorlage: `locales/en/messages.json`); fehlende Einträge fallen auf die Grundsprache und dann auf Englisch zurück. `language.dir` (`ltr`/`rtl`) legt die Schreibrichtung fest, `language.intl` die Locale für Pluralformen. Texte mit Zahlen nutzen die ICU-Pluralsyntax, z. B. `{count, plural, one {# Sender} other {# Sender}}`.
 
 ## Lokale Daten und Sicherungen
 
@@ -181,7 +183,7 @@ Für Änderungen an Nummerierung, Identität und TV-Schreibpfad müssen insbeson
 
 ### Versions- und Dokumentationspflege
 
-- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus und ändert Nummern über `iepg` (Neunummerierung und Listen-Umbenennung am TV bestätigt); v0.6.1 bündelt Export und Import in je einem Dialog und stellt Backups auf der aktuellen Arbeitskopie wieder her; v0.6.2 ergänzt den SSH-Port im TV-Login, den v0.6.3 auch für die Übertragung nutzt; v0.6.4 nimmt die LG Channels in die Listen auf, überträgt alle Empfangsarten und sortiert die Liste der übrigen Sender; v0.7.0 kopiert, fügt ein, exportiert und importiert einzelne Favoritenlisten.
+- **v0.5.24** bleibt der letzte erfolgreich am realen Gerät getestete Funktionsstand. v0.5.25 ergänzt den lesenden TV-Abgleichsbericht, das Hilfe-Popup, den Versions-Chip und die Lokalisierung; v0.5.26 zeigt und filtert die Empfangsart (Satellit, Kabel, Antenne); v0.6.0 führt die Übertragung als Hintergrund-Job mit Fortschrittsdialog, Abbruch und automatischem Re-Import aus und ändert Nummern über `iepg` (Neunummerierung und Listen-Umbenennung am TV bestätigt); v0.6.1 bündelt Export und Import in je einem Dialog und stellt Backups auf der aktuellen Arbeitskopie wieder her; v0.6.2 ergänzt den SSH-Port im TV-Login, den v0.6.3 auch für die Übertragung nutzt; v0.6.4 nimmt die LG Channels in die Listen auf, überträgt alle Empfangsarten und sortiert die Liste der übrigen Sender; v0.7.0 kopiert, fügt ein, exportiert und importiert einzelne Favoritenlisten; v0.8.0 ergänzt die Sprachauswahl, 20 Sprachen und englische Exportdateien.
 - Bei künftigen App-Releases `APP_VERSION` in `version.py`, beide READMEs und Tests konsistent halten. `?v=` und der Versions-Chip werden automatisch aus `version.py` gesetzt. Keine ungültigen verschachtelten `<script>`-/`<style>`-Tags erzeugen.
 
 ## Lizenz

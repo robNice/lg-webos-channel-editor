@@ -109,15 +109,13 @@ class LocaleFilesTests(unittest.TestCase):
         self.assertEqual(I18N.default, 'en')
 
     def test_every_language_has_same_keys_and_placeholders(self):
-        import string
+        from i18n import MessageFormat  # v0.8.0: ICU plural syntax
         english = I18N.messages('en')
         for lang in I18N.languages():
             messages = I18N.messages(lang)
             self.assertEqual(set(messages), set(english), lang)
             for key, text in messages.items():
-                fields = {f for _, f, _, _ in string.Formatter().parse(text) if f}
-                expected = {f for _, f, _, _ in string.Formatter().parse(english[key]) if f}
-                self.assertEqual(fields, expected, f'{lang}:{key}')
+                self.assertEqual(MessageFormat.names(text), MessageFormat.names(english[key]), f'{lang}:{key}')
 
 
 if __name__ == '__main__':

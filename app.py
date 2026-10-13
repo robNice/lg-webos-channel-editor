@@ -1003,7 +1003,15 @@ def export_file(conn, options, lang):
 
 
 class IndexPage:
-    """static/index.html with {{t:key}}, {{lang}}, {{version}}, {{i18n_json}} and {{logo}} placeholders.
+    """static/index.html with {{t:key}}, {{lang}}, {{version}}, {{i18n_json}}, {{logo}} and
+    {{language_options}} (language select: "auto" = browser language, then every
+    language in its own name; ``chosen`` is the user's choice or None) placeholders.
+
+    Every translated text is marked so the browser can switch the language
+    without reloading (LanguageChoice in app.js): text becomes
+    ``<span data-i18n="key">``, an <option>/<title> gets ``data-i18n`` itself,
+    an attribute ``x="{{t:a}} – {{t:b}}"`` gets ``data-i18n-x="{a} – {b}"``
+    plus ``data-i18n-attrs="x …"``.
 
     Keys ending in ``_html`` come from the trusted locale files and are inserted
     verbatim; all other texts are HTML-escaped. Without ``logo_path`` the header
@@ -1024,16 +1032,52 @@ class IndexPage:
         text = self.l10n.translate(lang, key)
         return text if key.endswith('_html') else html.escape(text)
 
-    def render(self, lang):
-        if lang not in self._cache:
+    TAG = re.compile(r'(<[^>]*>)')
+    ATTRIBUTE = re.compile(r'\s([\w-]+)="([^"]*\{\{t:[^"]*)"')
+    OWN_TEXT = re.compile(r'<(?:option|title)\b')
+
+    @classmethod
+    def _mark(cls, page):
+        """Adds the data-i18n markers; the {{t:key}} placeholders stay."""
+        parts = cls.TAG.split(page)
+        for i, part in enumerate(parts):
+            if '{{t:' not in part:
+                continue
+            if i % 2:  # a tag: translated attributes
+                names = []
+                def pattern(match):
+                    names.append(match.group(1))
+                    value = cls.PLACEHOLDER.sub(lambda m: '{' + m.group(1) + '}', match.group(2))
+                    return f'{match.group(0)} data-i18n-{match.group(1)}="{value}"'
+                tag = cls.ATTRIBUTE.sub(pattern, part)
+                parts[i] = tag[:-1].rstrip('/') + f' data-i18n-attrs="{" ".join(names)}"' + tag[len(tag[:-1].rstrip('/')):]
+            elif i and cls.OWN_TEXT.match(parts[i - 1]):
+                key = cls.PLACEHOLDER.search(part).group(1)
+                parts[i - 1] = parts[i - 1][:-1] + f' data-i18n="{key}">'
+            else:
+                parts[i] = cls.PLACEHOLDER.sub(lambda m: f'<span data-i18n="{m.group(1)}">{m.group(0)}</span>', part)
+        return ''.join(parts)
+
+    def _language_options(self, lang, chosen):
+        values = [('auto', self.l10n.translate(lang, 'language.auto'))] + \
+                 [(code, self.l10n.translate(code, 'language.name')) for code in self.l10n.languages()]
+        selected = chosen or 'auto'
+        marker = ' data-i18n="language.auto"'
+        return ''.join(f'<option value="{html.escape(v)}"{marker if v == "auto" else ""}'
+                       f'{" selected" if v == selected else ""}>{html.escape(label)}</option>' for v, label in values)
+
+    def render(self, lang, chosen=None):
+        key = (lang, chosen)
+        if key not in self._cache:
             catalog = json.dumps(self.l10n.catalog(lang), ensure_ascii=False).replace('</', '<\\/')
             has_logo = self.logo_path.is_file()
-            page = self.template.replace('{{logo}}', self.LOGO if has_logo else self.LOGO_FALLBACK)
+            page = self._mark(self.template.replace('{{logo}}', self.LOGO if has_logo else self.LOGO_FALLBACK))
             page = self.PLACEHOLDER.sub(lambda match: self._text(lang, match.group(1)), page)
-            page = (page.replace('{{lang}}', html.escape(lang)).replace('{{version}}', html.escape(self.version))
-                    .replace('{{i18n_json}}', catalog))
-            self._cache[lang] = page.encode('utf-8')
-        return self._cache[lang]
+            page = (page.replace('{{lang}}', html.escape(lang)).replace('{{dir}}', self.l10n.direction(lang)).replace('{{version}}', html.escape(self.version))
+                    .replace('{{i18n_json}}', catalog)
+                    .replace('{{language_options}}', self._language_options(lang, chosen)))
+            self._cache[key] = page.encode('utf-8')
+        return self._cache[key]
 
 
 INDEX = IndexPage(BASE / 'static' / 'index.html')
@@ -1086,7 +1130,7 @@ class Handler(BaseHTTPRequestHandler):
 
     @property
     def lang(self):
-        return I18N.negotiate(self.headers.get('Accept-Language'))
+        return I18N.choose(self.headers.get('Cookie'), self.headers.get('Accept-Language'))
 
     def t(self, key, **params):
         return I18N.translate(self.lang, key, **params)
@@ -1100,10 +1144,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path in ('/', '/index.html'):
-            return self.send_bytes(INDEX.render(self.lang), 'text/html; charset=utf-8')
+            return self.send_bytes(INDEX.render(self.lang, I18N.chosen(self.headers.get('Cookie'))), 'text/html; charset=utf-8')
         if parsed.path in PUBLIC_FILES and (BASE / 'static' / PUBLIC_FILES[parsed.path][0]).is_file():
             name, kind = PUBLIC_FILES[parsed.path]
             return self.send_bytes((BASE / 'static' / name).read_bytes(), kind)
+        if parsed.path == '/api/i18n':
+            # Catalog for switching the language in the browser without a reload.
+            return self.send_bytes(json.dumps({'lang': self.lang, 'dir': I18N.direction(self.lang),
+                                               'catalog': I18N.catalog(self.lang)}, ensure_ascii=False).encode())
         if parsed.path == '/site.webmanifest':
             return self.send_bytes(MANIFEST.render(self.lang), 'application/manifest+json')
         if parsed.path == '/api/tv-write-status':

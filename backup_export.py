@@ -23,9 +23,15 @@ JSON_FORMAT = 'lg-favoriten-editor-v2'
 CHANNELS_CSV = 'channels.csv'
 SCHEMA_SQL = 'schema.sql'
 TABLE_DIR = 'tables/'
-# Editor CSV columns in order; the header is localized (export.csv.<column>).
+# Editor CSV columns in order. The file format is English and independent of
+# the UI language (v0.8.0): fixed header, values as codes (satellite, tv, free).
 CSV_COLUMNS = ('number', 'name', 'satellite', 'reception', 'kind', 'access', 'channel_id')
+CSV_HEADER = {'number': 'Channel number', 'name': 'Channel name', 'satellite': 'Satellite',
+              'reception': 'Reception', 'kind': 'Type', 'access': 'Access', 'channel_id': 'Channel ID'}
+CSV_LIST = 'List {group}'
 LIST_SEPARATOR = ' · '
+# Texts inside export files (JSON note, default list names) are rendered in English.
+FILE_LANGUAGE = 'en'
 
 
 class ExportOptions:
@@ -100,14 +106,15 @@ class EditorExport:
         entry['positions'] = {g: c['positions'][g] for g in self.options.lists}
         return entry
 
-    def json(self, lang):
-        return json.dumps(I18N.localize(self.json_data(), lang), ensure_ascii=False, indent=2).encode()
+    def json(self, lang=FILE_LANGUAGE):
+        """``lang`` is ignored: the file is English in every UI language."""
+        return json.dumps(I18N.localize(self.json_data(), FILE_LANGUAGE), ensure_ascii=False, indent=2).encode()
 
     # -- CSV -----------------------------------------------------------------
-    def csv(self, lang):
+    def csv(self, lang=FILE_LANGUAGE):
         """Editor CSV (bytes); a ZIP with every table when raw data is chosen.
         Returns (bytes, content type, file name key)."""
-        table = self.editor_csv(lang)
+        table = self.editor_csv()
         if not self.options.raw:
             return table, 'text/csv; charset=utf-8', 'export.filename.csv'
         buffer = io.BytesIO()
@@ -118,19 +125,17 @@ class EditorExport:
                 archive.writestr(TABLE_DIR + name + '.csv', csv_bytes([columns] + rows))
         return buffer.getvalue(), 'application/zip', 'export.filename.zip'
 
-    def editor_csv(self, lang):
+    def editor_csv(self):
         o = self.options
-        t = lambda key, **params: I18N.translate(lang, key, **params)
         columns = [c for c in CSV_COLUMNS if c != 'number' or o.numbers]
-        header = [t('export.csv.' + c) for c in columns]
+        header = [CSV_HEADER[c] for c in columns]
         for g in o.lists:
-            label = t('export.csv.list', group=g)
-            header.append(label + LIST_SEPARATOR + I18N.render(self.group_name(g), lang) if o.names else label)
+            label = CSV_LIST.format(group=g)
+            header.append(label + LIST_SEPARATOR + I18N.render(self.group_name(g), FILE_LANGUAGE) if o.names else label)
         rows = [header]
         for c in self.channels:
             values = {'number': c['number'], 'name': c['name'], 'satellite': c['satellite'],
-                      'reception': t('reception.' + c['reception']), 'kind': t('kind.' + c['kind']),
-                      'access': t('access.' + c['access']), 'channel_id': c['id']}
+                      'reception': c['reception'], 'kind': c['kind'], 'access': c['access'], 'channel_id': c['id']}
             rows.append([values[col] for col in columns] + [self.positions[g].get(c['id'], '') for g in o.lists])
         return csv_bytes(rows)
 

@@ -36,7 +36,7 @@ class TemplateTests(unittest.TestCase):
             self.assertIn(key, english)
 
     def test_template_placeholders(self):
-        self.assertIn('<html lang="{{lang}}">', TEMPLATE)
+        self.assertIn('<html lang="{{lang}}" dir="{{dir}}">', TEMPLATE)
         self.assertIn('/static/style.css?v={{version}}', TEMPLATE)
         self.assertIn('/static/app.js?v={{version}}', TEMPLATE)
         self.assertIn('<script id="i18n" type="application/json">{{i18n_json}}</script>', TEMPLATE)
@@ -46,8 +46,8 @@ class TemplateTests(unittest.TestCase):
     def test_rendered_page_per_language(self):
         de = app.INDEX.render('de').decode()
         en = app.INDEX.render('en').decode()
-        self.assertIn('<html lang="de">', de)
-        self.assertIn('<html lang="en">', en)
+        self.assertIn('<html lang="de" dir="ltr">', de)
+        self.assertIn('<html lang="en" dir="ltr">', en)
         self.assertIn(I18N.translate('de', 'toolbar.tv_write'), de)
         self.assertIn(I18N.translate('en', 'toolbar.tv_write'), en)
         self.assertNotEqual(I18N.translate('de', 'toolbar.tv_write'), I18N.translate('en', 'toolbar.tv_write'))
@@ -99,10 +99,10 @@ class PythonSourceTests(unittest.TestCase):
 
 class HttpLanguageTests(AppServerTestCase):
     def test_index_language_from_header_with_english_fallback(self):
-        self.assertIn('<html lang="de">', self.get('/', 'de-DE,de;q=0.9')[1])
-        self.assertIn('<html lang="en">', self.get('/', 'en-US')[1])
-        self.assertIn('<html lang="en">', self.get('/', 'fr-FR')[1])
-        self.assertIn('<html lang="en">', self.get('/', None)[1])
+        self.assertIn('<html lang="de" dir="ltr">', self.get('/', 'de-DE,de;q=0.9')[1])
+        self.assertIn('<html lang="en" dir="ltr">', self.get('/', 'en-US')[1])
+        self.assertIn('<html lang="en" dir="ltr">', self.get('/', 'zh-CN')[1])
+        self.assertIn('<html lang="en" dir="ltr">', self.get('/', None)[1])
 
     def test_api_errors_are_localized(self):
         status, body, _ = self.get('/api/channels?group=Z', 'de')
@@ -120,7 +120,8 @@ class HttpLanguageTests(AppServerTestCase):
         self.assertTrue(body.startswith('Channel number,Channel name,Satellite'))
         self.assertIn('lg-favorites.csv', headers['Content-Disposition'])
         _, body, headers = self.get('/download/csv', 'de')
-        self.assertTrue(body.startswith('Sendernummer,Sendername,Satellit'))
+        # v0.8.0: the file format is English in every UI language; only the file name is localized.
+        self.assertTrue(body.startswith('Channel number,Channel name,Satellite'))
 
 
 if __name__ == '__main__':
@@ -136,5 +137,5 @@ class AppNameTests(unittest.TestCase):
             self.assertEqual(I18N.translate(lang, 'header.title'), self.NAME, lang)
             self.assertIn(self.NAME, I18N.translate(lang, 'header.logo_alt'))
             page = app.INDEX.render(lang).decode()
-            self.assertIn(f'<title>{self.NAME}</title>', page)
+            self.assertIn(f'<title data-i18n="page.title">{self.NAME}</title>', page)
             self.assertNotRegex(page, r'Favoriten-Editor|Favorites Editor')

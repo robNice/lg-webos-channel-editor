@@ -30,7 +30,8 @@ class FaviconMarkupTests(unittest.TestCase):
                     f'<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v={v}">',
                     f'<link rel="manifest" href="/site.webmanifest?v={v}">',
                     '<meta name="theme-color" content="#121d2b">',
-                    f'<meta name="apple-mobile-web-app-title" content="{I18N.translate("de", "manifest.short_name")}">'):
+                    f'<meta name="apple-mobile-web-app-title" content="{I18N.translate("de", "manifest.short_name")}" '
+                    'data-i18n-content="{manifest.short_name}" data-i18n-attrs="content">'):
             self.assertIn(tag, head)
 
     def test_no_svg_and_no_logo_favicon(self):

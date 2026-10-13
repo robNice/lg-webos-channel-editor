@@ -25,8 +25,8 @@ import zipfile
 from collections import defaultdict
 
 import tv_write
-from backup_export import CHANNELS_CSV, CSV_COLUMNS as EDITOR_CSV_COLUMNS, LIST_SEPARATOR
-from i18n import I18N, LocalizedError
+from backup_export import CHANNELS_CSV, CSV_HEADER, CSV_LIST, LIST_SEPARATOR
+from i18n import LocalizedError
 from reception import ReceptionMode
 
 GROUPS = 'ABCDEFGH'
@@ -84,7 +84,17 @@ class ImportFormat:
 
 
 class CsvHeader:
-    """Recognizes the localized header of the editor CSV in any language."""
+    """Recognizes the header of the editor CSV: the English one written since
+    v0.8.0 and the localized ones of v0.6.1-v0.7.1 (German, English). The
+    legacy spellings are frozen here, so new UI languages change nothing."""
+    LEGACY_COLUMNS = {'number': ('Sendernummer',), 'name': ('Sendername',), 'satellite': ('Satellit',),
+                      'reception': ('Empfangsart',), 'kind': ('Typ',), 'access': ('Zugang',),
+                      'channel_id': ('Kanal-ID',)}
+    LEGACY_LISTS = ('Liste {group}',)
+    # Reception values: codes since v0.8.0, before localized labels.
+    LEGACY_RECEPTION = {'satellite': ('Satellite', 'Satellit'), 'cable': ('Cable', 'Kabel'),
+                        'terrestrial': ('Antenna', 'Antenne'), 'ip': ('IP (LG Channels)',),
+                        'other': ('Reception unknown', 'Empfang unbekannt')}
 
     def __init__(self, header):
         columns, lists = {}, {}
@@ -106,27 +116,28 @@ class CsvHeader:
     def valid(self):
         return {'channel_id', 'name'} <= set(self.columns)
 
-    @staticmethod
-    def _column_names():
-        return {I18N.translate(lang, 'export.csv.' + column).casefold(): column
-                for lang in I18N.languages() for column in EDITOR_CSV_COLUMNS}
+    @classmethod
+    def _column_names(cls):
+        names = {label.casefold(): column for column, label in CSV_HEADER.items()}
+        for column, labels in cls.LEGACY_COLUMNS.items():
+            names.update({label.casefold(): column for label in labels})
+        return names
 
-    @staticmethod
-    def _list_patterns():
+    @classmethod
+    def _list_patterns(cls):
         patterns = []
-        for lang in I18N.languages():
-            prefix, _, suffix = I18N.translate(lang, 'export.csv.list', group='\x00').partition('\x00')
+        for template in (CSV_LIST,) + cls.LEGACY_LISTS:
+            prefix, _, suffix = template.format(group='\x00').partition('\x00')
             patterns.append(re.compile('^' + re.escape(prefix) + '([A-H])' + re.escape(suffix)
                                        + '(?:' + re.escape(LIST_SEPARATOR) + '(.*))?$', re.I | re.S))
         return patterns
 
-    @staticmethod
-    def reception(value):
-        """Localized reception label (any language) or code -> code, else None."""
+    @classmethod
+    def reception(cls, value):
+        """Reception code (or a legacy label) -> code, else None."""
         value = value.strip().casefold()
         for code in ReceptionMode.CODES:
-            if value == code or any(value == I18N.translate(lang, 'reception.' + code).casefold()
-                                    for lang in I18N.languages()):
+            if value == code or value in (label.casefold() for label in cls.LEGACY_RECEPTION.get(code, ())):
                 return code
         return None
 

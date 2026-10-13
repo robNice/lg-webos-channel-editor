@@ -1,9 +1,56 @@
 // UI texts come from the server-rendered catalog (locales/<lang>/messages.json).
 // Keys ending in _html contain trusted markup; escape every value passed into them.
 class Translator{
- constructor(catalog){this.catalog=catalog||{};}
- static fromPage(){try{return new Translator(JSON.parse(document.getElementById('i18n').textContent))}catch{return new Translator({})}}
- t(key,params={}){const text=this.catalog[key]??key;return text.replace(/\{(\w+)\}/g,(match,name)=>name in params?String(params[name]):match);}
+ // Same ICU subset as i18n.py (MessageFormat): {name} and
+ // {count, plural, =0 {…} one {# x} other {# xs}}; plural categories from
+ // Intl.PluralRules for language.intl (pt = pt-PT) or the page language.
+ constructor(catalog,lang){this.catalog=catalog||{};this.lang=lang||'en';this.parsed=new Map();}
+ static fromPage(){const lang=document.documentElement.lang;try{return new Translator(JSON.parse(document.getElementById('i18n').textContent),lang)}catch{return new Translator({},lang)}}
+ get locale(){return this.catalog['language.intl']||this.lang;}
+ t(key,params={}){
+   const text=this.catalog[key]??key;
+   let nodes=this.parsed.get(text);
+   if(nodes===undefined){try{nodes=Translator.parse(text,0,false)[0];}catch{nodes=null;}this.parsed.set(text,nodes);}
+   if(!nodes)return text.replace(/\{(\w+)\}/g,(m,name)=>name in params?String(params[name]):m);
+   const rules=new Intl.PluralRules(this.locale);
+   return Translator.render(nodes,params,n=>rules.select(n),null);
+ }
+ static parse(text,i,inPlural){
+   const nodes=[];let buffer='';const flush=()=>{if(buffer){nodes.push(buffer);buffer='';}};
+   while(i<text.length){
+     const c=text[i];
+     if(c==='{'){
+       const m=/^\{\s*(\w+)\s*(?:(\})|,\s*plural\s*,)/.exec(text.slice(i));if(!m)throw Error(text);
+       flush();
+       if(m[2]){nodes.push({arg:m[1]});i+=m[0].length;continue;}
+       i+=m[0].length;const options={};
+       for(;;){
+         while(i<text.length&&/\s/.test(text[i]))i++;
+         if(text[i]==='}'){i++;break;}
+         const o=/^\s*(=\d+|zero|one|two|few|many|other)\s*\{/.exec(text.slice(i));if(!o)throw Error(text);
+         [options[o[1]],i]=Translator.parse(text,i+o[0].length,true);
+       }
+       if(!options.other)throw Error(text);
+       nodes.push({plural:m[1],options});
+     }else if(c==='}'){if(!inPlural)throw Error(text);flush();return [nodes,i+1];}
+     else if(c==='#'&&inPlural){flush();nodes.push({hash:true});i++;}
+     else{buffer+=c;i++;}
+   }
+   if(inPlural)throw Error(text);
+   flush();return [nodes,i];
+ }
+ static number(v){return typeof v==='number'&&Number.isInteger(v)?v:typeof v==='string'&&/^\s*-?\d+\s*$/.test(v)?parseInt(v,10):null;}
+ static render(nodes,params,select,hash){
+   return nodes.map(node=>{
+     if(typeof node==='string')return node;
+     if(node.arg)return node.arg in params?String(params[node.arg]):`{${node.arg}}`;
+     if(node.hash)return hash;
+     const value=params[node.plural],n=Translator.number(value);
+     const branch=(n!==null&&node.options['='+n])||(n!==null&&node.options[select(Math.abs(n))])||node.options.other;
+     const shown=n!==null?String(n):node.plural in params?String(value):`{${node.plural}}`;
+     return Translator.render(branch,params,select,shown);
+   }).join('');
+ }
 }
 const translator=Translator.fromPage();const t=(key,params)=>translator.t(key,params);
 let selected='A',groups=[],favorites=[],others=[],dragged=null,busy=false;
@@ -702,6 +749,30 @@ class BackupHistoryDialog{
  }
 }
 $('#backupsbtn').onclick=()=>new BackupHistoryDialog().open();
+// Language: the browser's Accept-Language until the user chooses one; the
+// choice is a cookie so the server answers in it as well ("auto" deletes it).
+// Switching needs no reload (the TV login stays): the catalog comes from
+// /api/i18n, every text marked by the server (data-i18n, data-i18n-<attr>) is
+// replaced and the server-rendered data (lists, messages) is loaded again.
+class LanguageChoice{
+ static COOKIE='lang';
+ static init(){const select=$('#langselect');select.onchange=()=>this.change(select.value);}
+ static store(value){document.cookie=value==='auto'?`${this.COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`:`${this.COOKIE}=${encodeURIComponent(value)}; Path=/; Max-Age=31536000; SameSite=Lax`;}
+ static async change(value){
+   this.store(value);
+   try{const data=await api('/api/i18n');translator.catalog=data.catalog;translator.lang=data.lang;translator.parsed.clear();document.documentElement.lang=data.lang;document.documentElement.dir=data.dir;}
+   catch(e){note(e.message,true);return;}
+   this.translate(document);this.translate($('#help-text').content);
+   session.render();ListClipboard.render();
+   await refresh().catch(e=>note(e.message,true));
+ }
+ static translate(root){
+   for(const el of root.querySelectorAll('[data-i18n]')){const key=el.dataset.i18n;if(key.endsWith('_html'))el.innerHTML=t(key);else el.textContent=t(key);}
+   for(const el of root.querySelectorAll('[data-i18n-attrs]'))for(const name of el.dataset.i18nAttrs.split(' '))
+     el.setAttribute(name,el.getAttribute('data-i18n-'+name).replace(/\{([\w.]+)\}/g,(m,key)=>t(key)));
+ }
+}
+LanguageChoice.init();
 $('#tvimport').onclick=async()=>{const button=$('#tvimport');button.disabled=true;$('#tv-error').textContent='';try{await TvImport.run();}catch(e){$('#tv-error').textContent=e.message}finally{button.disabled=false;}};
 // After a page reload during a transfer, show its progress again before loading data.
 // Then ask once for the TV login of this page view.

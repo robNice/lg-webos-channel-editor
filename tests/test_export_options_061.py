@@ -187,13 +187,14 @@ class CsvExportTests(ExportTestCase):
         self.assertIn('text/csv', content_type)
         self.assertTrue(filename.endswith('.csv'))
         rows = self.rows(raw)
-        self.assertEqual(rows[0][:7], ['Sendernummer', 'Sendername', 'Satellit', 'Empfangsart', 'Typ', 'Zugang', 'Kanal-ID'])
-        self.assertIn('Liste C · Radio', rows[0])
+        # v0.8.0: the file format is English, whatever the UI language.
+        self.assertEqual(rows[0][:7], ['Channel number', 'Channel name', 'Satellite', 'Reception', 'Type', 'Access', 'Channel ID'])
+        self.assertIn('List C · Radio', rows[0])
         self.assertEqual(len(rows), len(CHANNELS) + 1)
         sender5 = next(r for r in rows if r[1] == 'Sender 5')
-        self.assertEqual(sender5[3], 'Kabel')
+        self.assertEqual(sender5[3], 'cable')
         sender3 = next(r for r in rows if r[1] == 'Sender 3')
-        self.assertEqual(sender3[rows[0].index('Liste C · Radio')], '1')
+        self.assertEqual(sender3[rows[0].index('List C · Radio')], '1')
 
     def test_selection_in_csv(self):
         rows = self.rows(self.export('csv', 'en', lists='A', names=0, numbers=0, channels='lists')[0])
@@ -207,9 +208,7 @@ class CsvExportTests(ExportTestCase):
             raw = self.export('csv', lang)[0]
             self.scramble()
             snapshot = BackupSnapshot.from_csv(raw)
-            self.assertEqual(snapshot.names, {g: n for g, n in {'A': 'Favoriten A', 'B': 'Favoriten B', 'C': 'Radio',
-                                                                'D': 'Favoriten D', 'E': 'Favoriten E', 'F': 'Favoriten F',
-                                                                'G': 'Favoriten G', 'H': 'Favoriten H'}.items()})
+            self.assertEqual(snapshot.names['C'], 'Radio')
             self.assertEqual(next(c for c in snapshot.channels if c['name'] == 'Sender 5')['mode'], 'cable')
             self.restore(raw, lists=['A', 'C'], names=['C'])
             self.assertEqual(members(app.DB), ['Sender 1', 'Sender 2', 'Sender 3', 'Sender 4'])

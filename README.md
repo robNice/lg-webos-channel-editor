@@ -4,7 +4,7 @@
 
 **English** · [Deutsch](README.de.md)
 
-**Current version: v0.7.0.** Last version fully confirmed on a real TV: **v0.5.24** (October 10, 2026). With v0.6.0, renumbering transfers (moves and swaps without the TV switching channels) and renaming a list were confirmed on the TV; copies with list migration have not yet been exercised there. v0.6.1 adds one export and one import dialog; an import restores a backup onto the current working copy. v0.6.2 adds an SSH port field to the TV login; v0.6.3 makes the transfer use that port too; v0.6.4 adds the LG Channels (IP) to the lists, transfers lists of every reception mode (satellite, cable, antenna, IP) and adds a sort order for the list of other channels. v0.7.0 copies a favorite list into another list and exports or imports a single list.
+**Current version: v0.8.0.** Last version fully confirmed on a real TV: **v0.5.24** (October 10, 2026). With v0.6.0, renumbering transfers (moves and swaps without the TV switching channels) and renaming a list were confirmed on the TV; copies with list migration have not yet been exercised there. v0.6.1 adds one export and one import dialog; an import restores a backup onto the current working copy. v0.6.2 adds an SSH port field to the TV login; v0.6.3 makes the transfer use that port too; v0.6.4 adds the LG Channels (IP) to the lists, transfers lists of every reception mode (satellite, cable, antenna, IP) and adds a sort order for the list of other channels. v0.7.0 copies a favorite list into another list and exports or imports a single list; v0.8.0 adds a language selection in the header (switching without reload), 20 interface languages and language-independent CSV/JSON exports.
 
 Browser-based management of LG webOS channel and favorite lists that **runs locally on your computer**. The application imports an SQLite backup of the LG TV via root SSH or from a file, edits a local working copy and can transfer selected changes back **via LG Luna APIs after a TV backup, live comparison, preview and explicit confirmation**. A running LG SQLite or LevelDB file is never overwritten directly.
 
@@ -45,7 +45,7 @@ Images are published on the GitHub Container Registry for `linux/amd64` and `lin
 | Tag | Content |
 | --- | --- |
 | `ghcr.io/robnice/lg-webos-channel-editor:latest` | latest release |
-| `ghcr.io/robnice/lg-webos-channel-editor:0.7.0` | a fixed release version |
+| `ghcr.io/robnice/lg-webos-channel-editor:0.8.0` | a fixed release version |
 | `ghcr.io/robnice/lg-webos-channel-editor:dev` | current development state, for tests only |
 
 A ready-to-copy example is [`docs/docker-compose.example.yml`](docs/docker-compose.example.yml): adjust the host port (left number, default `8765`) and the host directory for `/app/data`, then run `docker compose up -d` (or paste it into the OpenMediaVault Compose plugin) and open `http://<server>:8765`.
@@ -56,7 +56,7 @@ A ready-to-copy example is [`docs/docker-compose.example.yml`](docs/docker-compo
 
 Releases are built automatically: a tag `vX.Y.Z` on `main` (must match `version.py`) builds `:X.Y.Z` and `:latest` after the tests passed; every push to `dev` builds `:dev`.
 
-## Current features (v0.7.0)
+## Current features (v0.8.0)
 
 | Feature | Status |
 | --- | --- |
@@ -81,7 +81,7 @@ Releases are built automatically: a tag `vX.Y.Z` on `main` (must match `version.
 | Export or import a single list | Implemented; **Export** below the lists exports only the selected list (JSON or CSV, optionally with list name and numbers; no other options shown); **Import** below the lists reads any export or backup file and puts one of its lists (selectable, e.g. list C of the file into list A) into the selected list – replace or append as with pasting, optionally with the list name. Channels are matched like a backup restore; channels that no longer exist are skipped and listed |
 | Import a backup (SQLite, CSV, JSON) | Implemented; one **Import** button, format detected automatically; you choose which lists, list names and channel numbers are restored onto the current working copy (or replace it completely with an SQLite file) |
 | Reload favorite lists or the channel inventory from the TV | Implemented; all lists A–H (list panel), the selected list (middle panel) or the channel inventory (right panel); replacing locally changed lists requires confirmation |
-| User interface in English / German | Implemented; language from the browser setting, more languages can be added |
+| User interface in 20 languages | Implemented; language from the browser setting or chosen in the header (remembered, switches without reload), plural forms per language, right-to-left for Arabic; more languages can be added |
 
 **New programme numbers are limited to `1–99` in this application**, matching the LG input dialog. This is a **deliberate UI rule**, not a claim that the Luna API never accepts higher numbers. Existing numbers above 99 (e.g. 101, 1004, 4096) are imported and displayed unchanged. Automatic renumbering can affect other channels and the global numbering; the preview points this out. LG numbers each reception mode (satellite, cable, antenna) separately, so a favorite list can only be renumbered if all its channels share one reception mode; channel lists from earlier cable or antenna scans stay on the TV even if nothing is connected there anymore.
 
@@ -99,7 +99,9 @@ Releases are built automatically: a tag `vX.Y.Z` on `main` (must match `version.
 
 ## Languages
 
-The user interface and all messages are currently available in **English** and **German**. The language follows the browser's language setting (`Accept-Language`); if no matching language is available, **English** is used. To add a language, create a folder `locales/<language code>/` with a translated `messages.json` (template: `locales/en/messages.json`); missing entries automatically fall back to English.
+The user interface and all messages are available in 20 languages: Arabic, Danish, English, Finnish, French, German, Greek, Icelandic, Italian, Japanese, Korean, Norwegian (Bokmål), Polish, Portuguese (Portugal and Brazil), Russian, Spanish, Swedish, Turkish and Ukrainian. By default the language follows the browser's language setting (`Accept-Language`); if no matching language is available, **English** is used. The **language selection in the header** overrides it: the chosen language is remembered in this browser (cookie `lang`, one year) and applies to the page and all messages; **“Browser language”** returns to the browser setting. Switching takes effect immediately without reloading the page; a TV login stays. Only the texts of the current language are loaded; another language is fetched when you switch to it. Arabic is shown right to left (the layout for right-to-left languages is still being refined). Export files (CSV, JSON) are always in English, whatever the interface language, so they can be exchanged between users of different languages; older CSV files with German or English headers can still be imported.
+
+To add a language, create a folder `locales/<language code>/` (regional variants as `<language>-<REGION>`, e.g. `pt-BR`) with a translated `messages.json` (template: `locales/en/messages.json`); missing entries fall back to the base language and then to English. `language.dir` (`ltr`/`rtl`) sets the writing direction, `language.intl` the locale for plural forms. Texts with numbers use ICU plural syntax, e.g. `{count, plural, one {# channel} other {# channels}}`.
 
 ## Local data and backups
 
@@ -181,7 +183,7 @@ For changes to numbering, identity and the TV write path, the tests for slot swa
 
 ### Version and documentation maintenance
 
-- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; v0.5.26 shows and filters the reception mode (satellite, cable, antenna); v0.6.0 runs the transfer as a background job with progress dialog, cancellation and automatic re-import and changes numbers via `iepg` (renumbering and list renaming confirmed on the TV); v0.6.1 combines export and import into one dialog each and restores backups onto the current working copy; v0.6.2 adds the SSH port to the TV login, which v0.6.3 also uses for the transfer; v0.6.4 adds the LG Channels to the lists, transfers every reception mode and sorts the list of other channels; v0.7.0 copies, pastes, exports and imports single favorite lists.
+- **v0.5.24** remains the last feature state successfully tested on a real device. v0.5.25 adds the read-only TV comparison report, the help popup, the version chip and localization; v0.5.26 shows and filters the reception mode (satellite, cable, antenna); v0.6.0 runs the transfer as a background job with progress dialog, cancellation and automatic re-import and changes numbers via `iepg` (renumbering and list renaming confirmed on the TV); v0.6.1 combines export and import into one dialog each and restores backups onto the current working copy; v0.6.2 adds the SSH port to the TV login, which v0.6.3 also uses for the transfer; v0.6.4 adds the LG Channels to the lists, transfers every reception mode and sorts the list of other channels; v0.7.0 copies, pastes, exports and imports single favorite lists; v0.8.0 adds the language selection, 20 languages and English export files.
 - For future app releases, keep `APP_VERSION` in `version.py`, both READMEs and the tests consistent. `?v=` and the version chip are set automatically from `version.py`. Do not create invalid nested `<script>`/`<style>` tags.
 
 ## License
