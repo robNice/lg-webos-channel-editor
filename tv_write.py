@@ -489,7 +489,7 @@ def make_plan(working_path, tv_backup_path, live):
             if key in reusable_copies:
                 expected_id,expected_partner = reusable_copies[key]
                 if partner_id != expected_id or partner != expected_partner:
-                    raise LocalizedError('error.plan.astra_target_changed')
+                    raise LocalizedError('error.plan.copy_slot_changed')
                 # Original stays on the global list; the existing target keeps
                 # its own immutable LG ID. Only the A membership moves.
                 operations.append({'kind':'reuse_copy_favorite','key':key,

@@ -94,7 +94,7 @@ class AlreadyACopyTest(ExistingCopyTest):
         with sqlite3.connect(self.work) as db:
             db.execute('UPDATE tuner_on SET chan_no="125",chan_no_int=125 WHERE dvc_chan_id=?',(A,))
             db.row_factory=sqlite3.Row
-            with assert_raises_message(self, 'error.renumber.astra_duplicates_ambiguous'):
+            with assert_raises_message(self, 'error.renumber.copy_duplicates_ambiguous'):
                 app.renumber_plan(db,'A',26)
             self.assertEqual(db.execute('SELECT count(*) FROM tuner_on WHERE fav_chan_gr_a="1"').fetchone()[0],4)
 

@@ -604,7 +604,7 @@ def renumber_plan(conn, group, start=1):
             copies = [c for c in candidates if 1 <= int(c['number']) <= 99]
             if not originals or not copies: continue
             if len(originals) != 1 or len(copies) != 1:
-                raise LocalizedError('error.renumber.astra_duplicates_ambiguous')
+                raise LocalizedError('error.renumber.copy_duplicates_ambiguous')
             original, copy = originals[0], copies[0]
             # Keep the earlier of the two list positions for the one survivor.
             first = min(positions[original['id']],positions[copy['id']])
