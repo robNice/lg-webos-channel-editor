@@ -63,7 +63,7 @@ def channel_map(conn):
     rows = []
     for table in channel_tables(conn):
         available = {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}
-        policy_cols = [c for c in ('satelliteLcn_flag', 'signal_chan_id') if c in available]
+        policy_cols = [c for c in ('satelliteLcn_flag', 'signal_chan_id', 'invisible_flag') if c in available]
         rows += [dict(r) for r in conn.execute(
             'SELECT dvc_chan_id,chan_std_name,chan_no,sat_name,chan_mode_name,'+
             ','.join(f'fav_chan_gr_{g.lower()},favoriteIdx{g}' for g in GROUPS)+
@@ -84,6 +84,8 @@ def channel_map(conn):
                                         else int(r['satelliteLcn_flag'])),
                  'number_policy': number_policy(db_id, identity[2], r['chan_no'],
                                 r.get('satelliteLcn_flag'), r.get('signal_chan_id')),
+                 # Hidden by the TV itself; still takes list and number writes.
+                 'invisible': bool(r.get('invisible_flag')),
                  'groups': {g: str(r[f'fav_chan_gr_{g.lower()}'] or '').strip().lower()
                             in ('1','true') for g in GROUPS},
                  'index': {g: int(r[f'favoriteIdx{g}'] or 0) for g in GROUPS}}
@@ -116,10 +118,13 @@ def luna(client, method, payload, service=SERVICE):
 
 def live_channels(client):
     # Do not restrict to Digital TV: tuner_on also contains satellite radio
-    # (e.g. hr1), and the LG API must return the same scope as SQLite.
+    # (e.g. hr1), and the LG API must return the same scope as SQLite. No
+    # attribute filter either: 'Invisible: false' drops the channels the TV
+    # hides itself, which SQLite holds and favorite lists can contain
+    # (real TV 13.10.2026; they come with 'Invisible: true').
     payload = {'dataType':0,'sort':0,'channelMode':LIVE_MODES,
                'channelGroup':['All'],'acceptEmptyGroupName':False,
-               'attribute':[{'filterType':'Invisible','value':False}]}
+               'attribute':[]}
     response = luna(client,'getChannelList',payload)
     if response.get('returnValue') is False: raise LocalizedError('error.live.list_unreadable')
     channels = response.get('channelList')
@@ -131,6 +136,13 @@ def live_channels(client):
         if not _identity_complete(key): continue
         result.setdefault(key, []).append(c)
     return result
+
+
+def channel_label(local):
+    """Channel name for messages; hidden channels say so, as LG's handling
+    of numbers and order for them is not measured yet."""
+    name = local.get('name')
+    return Message('channel.hidden_name', name=name) if local.get('invisible') else name
 
 
 def _technical_id(channel_id):
@@ -163,7 +175,7 @@ def match_live(local, live, expected_number=None):
                       if stable and _technical_id(c.get('channelId')) == stable
                       and str(c.get('channelNumber')) == number]
         if len(candidates) != 1:
-            raise LocalizedError('error.identity.expected_number_not_unique', name=local['name'],
+            raise LocalizedError('error.identity.expected_number_not_unique', name=channel_label(local),
                                  id=original_id, number=number, count=len(candidates))
         return candidates[0]
     # Compatibility for synthetic tests without LG IDs. Real DB entries always
@@ -172,7 +184,7 @@ def match_live(local, live, expected_number=None):
     number=str(expected_number if expected_number is not None else local['number'])
     candidates=[c for c in candidates if str(c.get('channelNumber'))==number]
     if len(candidates)!=1:
-        raise LocalizedError('error.identity.live_not_unique', name=local['name'],
+        raise LocalizedError('error.identity.live_not_unique', name=channel_label(local),
                              number=number, count=len(candidates))
     return candidates[0]
 
@@ -194,7 +206,7 @@ def _describe_live_candidates(live, entries):
                         or str(c.get('channelNumber') or '') == str(expected_number))]
         text = ', '.join(str(c.get('channelNumber', '?')) + ' (' +
                          str(c.get('channelId') or '?') + ')' for c in relevant[:12])
-        info.append(Message('diag.live_candidate', name=str(local.get('name') or '?'), original=original,
+        info.append(Message('diag.live_candidate', name=channel_label(local) or '?', original=original,
                             target=str(expected_number), matches=text or Message('diag.no_matches')))
     return Joined(' | ', info)
 
@@ -563,10 +575,10 @@ def make_plan(working_path, tv_backup_path, live):
         b=baseline[key]
         l=match_live(b,live,b['number'])
         if str(l.get('channelNumber'))!=b['number']:
-            raise LocalizedError('error.plan.tv_number_changed', name=b['name'])
+            raise LocalizedError('error.plan.tv_number_changed', name=channel_label(b))
         lg=set(l.get('favoriteGroup') or [])
         if any((g in lg)!=b['groups'][g] for g in GROUPS):
-            raise LocalizedError('error.plan.tv_favorites_differ', name=b['name'])
+            raise LocalizedError('error.plan.tv_favorites_differ', name=channel_label(b))
     # Preflight ALL initially occupied source and destination slots used by
     # the whole sequence. A slot that will be freed later must be checked NOW
     # against the snapshot, not against a predicted later intermediate state.
@@ -615,7 +627,7 @@ def verify_membership(client, local, group, expected):
     live=live_channels(client)
     c=match_live(local,live)
     if (group in set(c.get('favoriteGroup') or []))!=expected:
-        raise LocalizedError('error.verify.favorite_unconfirmed', name=local['name'])
+        raise LocalizedError('error.verify.favorite_unconfirmed', name=channel_label(local))
 
 
 def _channel_by_id(live, channel_id):
@@ -706,7 +718,7 @@ def _migrate_copy_favorites(client, source, new_channel_id, original_channel_id)
     moving = sorted(_copy_groups(source))
     if not moving:
         return live_channels(client)
-    context = Message('diag.copy_context', name=str(source['name']),
+    context = Message('diag.copy_context', name=channel_label(source),
                       original_id=str(original_channel_id), copy_id=str(new_channel_id))
     before = live_channels(client)
     old_before = _channel_by_id(before, original_channel_id)
@@ -920,7 +932,7 @@ def apply_operations(client,operations,edited,baseline,progress=None):
                 observed = set(participant.get('favoriteGroup') or [])
                 expected = before_groups[swapped_key]
                 if observed != expected:
-                    label = baseline[swapped_key]['name']
+                    label = channel_label(baseline[swapped_key])
                     original_id = str(baseline[swapped_key]['db_id'])
                     raise LocalizedError(
                         'error.swap.groups_changed', name=label, original_id=original_id,
@@ -957,7 +969,7 @@ def apply_operations(client,operations,edited,baseline,progress=None):
                 detail=str(ret.get('errorText')) if ret.get('errorText') else Message('diag.no_error_description')
                 explanation = (Message('error.number.rejected_1003_hint') if code == 'CHANNEL_ERROR_1003' else '')
                 raise LocalizedError('error.number.rejected', code=code, detail=detail,
-                                     name=baseline[key]['name'], old=op['from'], new=op['to'],
+                                     name=channel_label(baseline[key]), old=op['from'], new=op['to'],
                                      id=str(item['channelId']), explanation=explanation)
             try:
                 after, (new,) = wait_for_number_confirmation(client, [(baseline[key],op['to'])])

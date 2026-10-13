@@ -11,7 +11,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY LICENSE README.md README.de.md ./
+COPY LICENSE README.md README.de.md TECHNICAL.md TECHNICAL.de.md ./
 COPY *.py ./
 COPY static/ static/
 COPY locales/ locales/

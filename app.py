@@ -440,7 +440,7 @@ def channel_rows(conn, table='tuner_on'):
     # table='ip': LG Channels streams (number locked, see IpChannels).
     if table not in ('tuner_on', IpChannels.TABLE): raise ValueError(table)
     available={r[1] for r in conn.execute(f'PRAGMA table_info({table})').fetchall()}
-    columns=['chan_type_name','radio_flag','tv_flag','dtv_flag','pay_chan_flag','scrambled_flag','satelliteLcn_flag','signal_chan_id','service_type','svc_type','serviceType','service_type_id','chan_service_type','mso_prdt_itm_code','scrambled','is_scrambled','scramble','free_ca_mode','chan_type','channel_type','radio','is_radio','is_tv','is_pay','pay_chan']
+    columns=['chan_type_name','radio_flag','tv_flag','dtv_flag','pay_chan_flag','scrambled_flag','satelliteLcn_flag','signal_chan_id','invisible_flag','service_type','svc_type','serviceType','service_type_id','chan_service_type','mso_prdt_itm_code','scrambled','is_scrambled','scramble','free_ca_mode','chan_type','channel_type','radio','is_radio','is_tv','is_pay','pay_chan']
     optional=[col for col in columns if col in available]
     rows = conn.execute('SELECT dvc_chan_id, chan_no, chan_no_int, chan_std_name, sat_name, chan_mode_name, '+(' , '.join(optional)+', ' if optional else '')
                         + ', '.join(f'fav_chan_gr_{g.lower()}, favoriteIdx{g}' for g in GROUPS)
@@ -464,6 +464,8 @@ def channel_rows(conn, table='tuner_on'):
             'numberPolicy': number_policy(key, r['chan_mode_name'], r['chan_no_int'],
                             r['satelliteLcn_flag'] if 'satelliteLcn_flag' in optional else None,
                             r['signal_chan_id'] if 'signal_chan_id' in optional else None),
+            # Hidden by the TV itself (LG invisible_flag); lists can still hold it.
+            'hidden': bool(r['invisible_flag']) if 'invisible_flag' in optional else False,
             'favorites': memberships, 'positions': positions,
         }
     return list(channels.values())

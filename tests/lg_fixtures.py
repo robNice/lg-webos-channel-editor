@@ -24,6 +24,8 @@ def create_channel_db(path, channels):
     optional ``mso`` (default ``'main'``), ``favorites`` ({group: index}),
     ``mode`` (LG ``chan_mode_name``, default ``'Satellite'``) and ``satellite``
     (``sat_name``, default ``'ASTRA 19.2E'`` for satellite, otherwise empty).
+    If any channel has ``invisible`` (hidden by the TV), the tables get LG's
+    ``invisible_flag`` column; otherwise they lack it like older exports.
     """
     columns = ', '.join(f'fav_chan_gr_{g.lower()} TEXT, favoriteIdx{g} INTEGER' for g in GROUPS)
     with sqlite3.connect(path) as conn:
@@ -46,6 +48,11 @@ def create_channel_db(path, channels):
             placeholders = ','.join('?' * len(values))
             for table in ('tuner_on', 'tuner_off'):
                 conn.execute(f'INSERT INTO {table} VALUES ({placeholders})', values)
+        if any('invisible' in c for c in channels):
+            for table in ('tuner_on', 'tuner_off'):
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN invisible_flag INTEGER DEFAULT 0')
+                conn.executemany(f'UPDATE {table} SET invisible_flag=1 WHERE dvc_chan_id=?',
+                                 [(c['id'],) for c in channels if c.get('invisible')])
     return path
 
 
@@ -77,6 +84,9 @@ class LiveTvSim:
     getChannelList with channelMode ['Tuner', 'IP'] returns satellite, cable,
     terrestrial and IP channels; 'Tuner' alone only the first three. LG's
     satelliteName is ' ' for cable/terrestrial and 'UNKNOWN' for IP.
+    Channels with ``invisible`` (hidden by the TV) carry ``Invisible: true``
+    and are left out by the attribute filter ``Invisible: false``; favorite
+    calls accept them like visible ones (measured 13.10.2026).
     Use ``luna`` in place of tv_write.luna."""
     TUNER = ('Satellite', 'Cable', 'Terrestrial')
     SATELLITE_NAME = {'Satellite': 'ASTRA 19.2E', 'IP': 'UNKNOWN'}
@@ -91,7 +101,7 @@ class LiveTvSim:
             favorites = c.get('favorites', {})
             self.items.append({'channelId': c['id'], 'channelName': c['name'], 'channelNumber': str(c['number']),
                                'channelMode': mode, 'satelliteName': self.SATELLITE_NAME.get(mode, ' '),
-                               'favoriteGroup': sorted(favorites)})
+                               'favoriteGroup': sorted(favorites), 'Invisible': bool(c.get('invisible'))})
         for g in GROUPS:
             members = [(c['favorites'][g], c['id']) for c in channels if g in c.get('favorites', {})]
             self.order[g] = [cid for _, cid in sorted(members)]
@@ -113,8 +123,10 @@ class LiveTvSim:
             modes = payload['channelMode']
             modes = [modes] if isinstance(modes, str) else modes
             wanted = {m for mode in modes for m in (self.TUNER if mode == 'Tuner' else (mode,))}
+            hidden = {a['value'] for a in payload.get('attribute') or [] if a.get('filterType') == 'Invisible'}
             return {'returnValue': True, 'channelList': [self._view(c) for c in self.items
-                                                         if c['channelMode'] in wanted]}
+                                                         if c['channelMode'] in wanted
+                                                         and (not hidden or c['Invisible'] in hidden)]}
         if method == 'setChannelFavoriteGroup':
             for cid in payload['channelId']:
                 for g in payload['favoriteGroup']:
